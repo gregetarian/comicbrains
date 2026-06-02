@@ -47,10 +47,15 @@ function attachValues(mesh, values) {
     return arr;
 }
 
-/** Attach per-vertex cluster size (for the live cluster-extent filter). */
+/** Attach per-vertex cluster size (for the live cluster-extent filter). When the
+ *  cluster sidecar is missing/mismatched (e.g. assets predating the feature), fill
+ *  a huge value so the cluster threshold never hides the voxels (unknown ⇒ show). */
 function attachClusters(mesh, clusters) {
-    if (!clusters || !clusters.length) return;
-    mesh.geometry.setAttribute('aClusterSize', new THREE.BufferAttribute(new Float32Array(clusters), 1));
+    const n = mesh.geometry.attributes.position.count;
+    const arr = new Float32Array(n);
+    if (clusters && clusters.length === n) arr.set(clusters);
+    else arr.fill(1e9);
+    mesh.geometry.setAttribute('aClusterSize', new THREE.BufferAttribute(arr, 1));
 }
 
 export async function loadScene(manifestUrl) {
