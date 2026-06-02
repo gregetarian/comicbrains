@@ -46,7 +46,20 @@ export const NINE_PANEL = {
     },
 };
 
-export const PRESETS = { fourPanel: FOUR_PANEL, ninePanel: NINE_PANEL };
+// Overview: one of each canonical view — a lateral, anterior, dorsal, and medial.
+export const OVERVIEW = {
+    layout: {
+        grid: { rows: 2, cols: 2, rowWeights: [1, 1], colWeights: [1, 1] },
+        panels: [
+            { id: 'L_lat', title: 'L Lateral', cell: { row: 0, col: 0 }, camera: { plane: 'left_lateral' },  content: cortexVoxel('lh'),   framing: SHARED },
+            { id: 'ant',   title: 'Anterior',  cell: { row: 0, col: 1 }, camera: { plane: 'anterior' },      content: cortexVoxel('both'), framing: SHARED },
+            { id: 'dor',   title: 'Dorsal',    cell: { row: 1, col: 0 }, camera: { plane: 'dorsal' },        content: cortexVoxel('both'), framing: SHARED },
+            { id: 'R_med', title: 'R Medial',  cell: { row: 1, col: 1 }, camera: { plane: 'right_medial' },  content: cortexVoxel('rh'),   framing: SHARED },
+        ],
+    },
+};
+
+export const PRESETS = { fourPanel: FOUR_PANEL, ninePanel: NINE_PANEL, overview: OVERVIEW };
 
 /** Resolve a preset name or a raw config object → a normalized config. */
 export function resolveConfig(nameOrConfig, overrides = {}) {

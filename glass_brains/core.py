@@ -230,7 +230,7 @@ def cli():
     show_parser.add_argument('-k', '--cluster-size', type=int, default=105,
                              help='initial cluster-extent threshold in voxels (adjustable live)')
     show_parser.add_argument('--cmap', default='YlGnBu')
-    show_parser.add_argument('--layout', default='ninePanel', help='fourPanel | ninePanel')
+    show_parser.add_argument('--layout', default='ninePanel', help='fourPanel | ninePanel | overview')
     show_parser.add_argument('--port', type=int, default=8421)
     show_parser.add_argument('--no-subcortical', action='store_true')
 
