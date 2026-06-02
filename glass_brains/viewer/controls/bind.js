@@ -85,8 +85,20 @@ function buildOverlayRows({ engine, config, colormaps }) {
         const row = document.createElement('div'); row.className = 'row overlay-row';
         const gName = document.createElement('div'); gName.className = 'grp';
         const nm = document.createElement('span'); nm.className = 'lab ov-name';
-        nm.textContent = overlays.length > 1 ? (ov.name || ('NIfTI ' + (i + 1))) : 'Voxels';
-        gName.append(nm); row.append(gName);
+        nm.textContent = ov.name || ('NIfTI ' + (i + 1));
+        nm.title = ov.name || '';
+        const rm = document.createElement('button'); rm.className = 'btn rm'; rm.textContent = '✕';
+        rm.title = 'Remove this overlay';
+        rm.addEventListener('click', async () => {
+            rm.disabled = true; rm.textContent = '…';
+            try {
+                const r = await fetch('/api/remove-overlay', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: i }) });
+                const res = await r.json();
+                if (!res.ok) throw new Error(res.error || 'remove failed');
+                location.reload();
+            } catch (err) { rm.disabled = false; rm.textContent = '✕'; alert('Remove failed: ' + err.message); }
+        });
+        gName.append(nm, rm); row.append(gName);
 
         const g = document.createElement('div'); g.className = 'grp';
 

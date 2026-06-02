@@ -28,10 +28,7 @@ async function main() {
     const ctrls = document.getElementById('controls'); if (ctrls) ctrls.style.display = 'none';
     const kt = document.querySelector('.kapow-toggle'); if (kt) kt.style.display = 'none';
     const showColorbar = config.render.colorbar !== false;
-    document.body.classList.toggle('nobar', !showColorbar);   // before measuring the canvas
-    { const r = config.render; const n = Math.max(1, sceneModel.manifest.overlays?.length || 1);
-      const per = (r.colorbarHeight ?? 14) + (r.colorbarFontSize ?? 11) + (n > 1 ? 16 : 8);
-      document.documentElement.style.setProperty('--cbstrip', showColorbar ? (n * per + 16) + 'px' : '0px'); }
+    document.body.classList.toggle('nobar', !showColorbar);
     const container = document.getElementById('viewer');
     const W = config.render.width, H = config.render.height, pr = config.render.pixelRatio || 2;
     container.style.width = W + 'px'; container.style.height = H + 'px';
@@ -39,11 +36,15 @@ async function main() {
     const canvas = document.getElementById('canvas');
     const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
     renderer.setPixelRatio(pr);
-    const cw = canvas.clientWidth, ch = canvas.clientHeight; // canvas minus colorbar strip
-    renderer.setSize(cw, ch);
-
-    const engine = createEngine({ renderer, width: cw, height: ch, sceneModel, colormaps, config });
+    const engine = createEngine({ renderer, width: canvas.clientWidth || W, height: canvas.clientHeight || H, sceneModel, colormaps, config });
     const colorbar = showColorbar ? createColorbar(container, { engine, config, colormaps }) : null;
+
+    // Reserve the strip from the MEASURED colorbar height (after the web font loads,
+    // so the height is final), then size the renderer to the resulting canvas.
+    if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
+    const strip = (!colorbar) ? 0 : Math.ceil(colorbar.el.getBoundingClientRect().height) + 22;
+    document.documentElement.style.setProperty('--cbstrip', strip + 'px');
+    engine.resize(canvas.clientWidth, canvas.clientHeight);
 
     document.getElementById('loading').style.display = 'none';
     // A few frames to compile shaders + populate the colorbar, then flag done.

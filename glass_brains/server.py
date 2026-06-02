@@ -16,18 +16,85 @@ class GlassBrainHandler(http.server.SimpleHTTPRequestHandler):
     glass_brain = None
 
     def do_POST(self):
-        if self.path == '/api/load-overlay':
-            try:
-                self._handle_load_overlay()
-            except Exception as e:
-                import traceback
-                traceback.print_exc()
-                self.send_response(500)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
-        else:
+        routes = {'/api/load-overlay': self._handle_load_overlay,
+                  '/api/remove-overlay': self._handle_remove_overlay}
+        handler = routes.get(self.path)
+        if handler is None:
             self.send_error(404)
+            return
+        try:
+            handler()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'ok': False, 'error': str(e)}).encode())
+
+    def _json(self, payload, status=200):
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.end_headers()
+        self.wfile.write(json.dumps(payload).encode())
+
+    def _reexport_overlays(self):
+        """Rewrite GLB + sidecars + scene.json for ALL current overlays (index-prefixed)."""
+        import shutil
+        from .export import export_mesh
+        gb = self.__class__.glass_brain
+        export_dir = Path(self.__class__.export_dir)
+        overlay_dir = export_dir / 'overlay'
+        if overlay_dir.exists():
+            shutil.rmtree(overlay_dir)
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+
+        overlay_entries = []
+        for i, ov in enumerate(gb.overlays):
+            entry = {
+                'name': ov['name'], 'colormap': ov['cmap'], 'threshold': ov['threshold'],
+                'maxAbsValue': ov['max_abs_value'], 'maxClusterSize': ov.get('max_cluster', 0),
+                'diverging': bool(ov['diverging']), 'role': 'overlay', 'structureOverlays': {},
+            }
+            for cat, so in ov['structure_overlays'].items():
+                base = f"overlay/o{i}_{cat}"          # index-prefixed → unique across overlays
+                export_mesh(so['mesh'], export_dir / f"{base}.glb")
+                with open(export_dir / f"{base}_values.json", 'w') as f:
+                    json.dump(so['values'], f)
+                with open(export_dir / f"{base}_clusters.json", 'w') as f:
+                    json.dump(so['clusters'], f)
+                cat_entry = {'mesh': f"{base}.glb", 'values': f"{base}_values.json", 'clusters': f"{base}_clusters.json"}
+                if 'mesh_smooth' in so:
+                    export_mesh(so['mesh_smooth'], export_dir / f"{base}_smooth.glb")
+                    with open(export_dir / f"{base}_smooth_values.json", 'w') as f:
+                        json.dump(so['values_smooth'], f)
+                    with open(export_dir / f"{base}_smooth_clusters.json", 'w') as f:
+                        json.dump(so['clusters_smooth'], f)
+                    cat_entry['meshSmooth'] = f"{base}_smooth.glb"
+                    cat_entry['valuesSmooth'] = f"{base}_smooth_values.json"
+                    cat_entry['clustersSmooth'] = f"{base}_smooth_clusters.json"
+                entry['structureOverlays'][cat] = cat_entry
+            overlay_entries.append(entry)
+
+        scene_path = export_dir / 'scene.json'
+        with open(scene_path) as f:
+            scene = json.load(f)
+        scene['overlays'] = overlay_entries
+        with open(scene_path, 'w') as f:
+            json.dump(scene, f, indent=2)
+        return overlay_entries
+
+    def _handle_remove_overlay(self):
+        length = int(self.headers.get('Content-Length', 0))
+        body = self.rfile.read(length) if length else b'{}'
+        idx = int(json.loads(body or b'{}').get('index', -1))
+        gb = self.__class__.glass_brain
+        if 0 <= idx < len(gb.overlays):
+            removed = gb.overlays.pop(idx)
+            print(f"Removed overlay [{idx}]: {removed['name']}")
+        entries = self._reexport_overlays()
+        self._json({'ok': True, 'count': len(entries)})
 
     def _handle_load_overlay(self):
         # Read multipart form data (threshold, cmap, file)
@@ -58,69 +125,15 @@ class GlassBrainHandler(http.server.SimpleHTTPRequestHandler):
         print(f"Saved upload to {tmp.name} ({len(file_data)} bytes)")
 
         gb = self.__class__.glass_brain
-        export_dir = Path(self.__class__.export_dir)
 
-        # APPEND the new overlay (keep existing ones — multiple NIfTIs coexist).
+        # APPEND the new overlay (keep existing ones — multiple NIfTIs coexist),
+        # then re-export every overlay's assets + scene.json.
         gb.add_overlay(tmp.name, threshold=threshold, cmap=cmap, name=name)
+        entries = self._reexport_overlays()
+        self._json({'ok': True, 'count': len(entries)})
 
-        # Re-export ALL overlay files (cortex/subcort already exported).
-        import shutil
-        from .export import export_mesh
-
-        overlay_dir = export_dir / 'overlay'
-        if overlay_dir.exists():
-            shutil.rmtree(overlay_dir)
-        overlay_dir.mkdir(parents=True, exist_ok=True)
-
-        overlay_entries = []
-        for i, ov in enumerate(gb.overlays):
-            entry = {
-                'name': ov['name'],
-                'colormap': ov['cmap'],
-                'threshold': ov['threshold'],
-                'maxAbsValue': ov['max_abs_value'],
-                'maxClusterSize': ov.get('max_cluster', 0),
-                'diverging': bool(ov['diverging']),
-                'role': 'overlay',
-                'structureOverlays': {},
-            }
-            for cat, so in ov['structure_overlays'].items():
-                base = f"overlay/o{i}_{cat}"          # index-prefixed → unique across overlays
-                export_mesh(so['mesh'], export_dir / f"{base}.glb")
-                with open(export_dir / f"{base}_values.json", 'w') as f:
-                    json.dump(so['values'], f)
-                with open(export_dir / f"{base}_clusters.json", 'w') as f:
-                    json.dump(so['clusters'], f)
-                cat_entry = {'mesh': f"{base}.glb", 'values': f"{base}_values.json", 'clusters': f"{base}_clusters.json"}
-                if 'mesh_smooth' in so:
-                    export_mesh(so['mesh_smooth'], export_dir / f"{base}_smooth.glb")
-                    with open(export_dir / f"{base}_smooth_values.json", 'w') as f:
-                        json.dump(so['values_smooth'], f)
-                    with open(export_dir / f"{base}_smooth_clusters.json", 'w') as f:
-                        json.dump(so['clusters_smooth'], f)
-                    cat_entry['meshSmooth'] = f"{base}_smooth.glb"
-                    cat_entry['valuesSmooth'] = f"{base}_smooth_values.json"
-                    cat_entry['clustersSmooth'] = f"{base}_smooth_clusters.json"
-                entry['structureOverlays'][cat] = cat_entry
-            overlay_entries.append(entry)
-
-        # Update scene.json with ALL overlays
-        scene_path = export_dir / 'scene.json'
-        with open(scene_path) as f:
-            scene = json.load(f)
-        scene['overlays'] = overlay_entries
-        with open(scene_path, 'w') as f:
-            json.dump(scene, f, indent=2)
-
-        self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
-        self.send_header('Access-Control-Allow-Origin', '*')
-        self.end_headers()
-        self.wfile.write(json.dumps({'ok': True, 'count': len(overlay_entries)}).encode())
-
-        # Cleanup temp file
         Path(tmp.name).unlink(missing_ok=True)
-        print(f"Loaded overlay: {name} (threshold={threshold}, cmap={cmap})")
+        print(f"Loaded overlay: {name} (threshold={threshold}, cmap={cmap}); now {len(entries)} overlays")
 
     def end_headers(self):
         # Dev server: never let the browser cache JS/HTML modules, so edits

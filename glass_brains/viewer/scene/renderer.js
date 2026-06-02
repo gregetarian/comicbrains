@@ -289,7 +289,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
 
     function resize(w, h) {
         width = w; height = h;
-        renderer.setSize(w, h);
+        renderer.setSize(w, h, false);   // updateStyle=false: let CSS control display size
         grid = layoutGrid({ width, height, ...config.layout.grid });
         cortexOutline.setSize(w, h);
         for (const ep of edgePasses) ep.setSize(w, h);
@@ -298,7 +298,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
 
     function setPixelRatio(pr) {
         renderer.setPixelRatio(pr);
-        renderer.setSize(width, height);
+        renderer.setSize(width, height, false);
         cortexOutline.pr = pr; cortexOutline.setSize(width, height);
         for (const ep of edgePasses) { ep.pr = pr; ep.setSize(width, height); }
         clipTarget.setSize(Math.round(width * pr), Math.round(height * pr));

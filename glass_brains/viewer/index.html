@@ -36,9 +36,12 @@
     /* control bar — one global surface row + one row per overlay (stacked) */
     #controls { flex: none; display: flex; flex-direction: column; background: #fafafa;
       border-top: 1px solid #e3e3e3; max-height: 46vh; overflow-y: auto; }
-    .row { display: flex; align-items: center; gap: 16px; padding: 6px 14px; white-space: nowrap; overflow-x: auto; }
+    .row { display: flex; align-items: center; gap: 16px; padding: 6px 14px; white-space: nowrap;
+      overflow-x: auto; overflow-y: hidden; min-height: 56px; scrollbar-width: thin; }
     .row + .row { border-top: 1px solid #ececec; }
     .overlay-row { background: #fcfcfc; }
+    .ov-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
+    .btn.rm { color: #c0392b; font-weight: 700; padding: 2px 7px; line-height: 1; }
     .grp { display: flex; align-items: center; gap: 6px; }
     .grp + .grp { border-left: 1px solid #e3e3e3; padding-left: 16px; }
     .lab { font-size: 9px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
