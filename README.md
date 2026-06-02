@@ -18,6 +18,10 @@ drives both, so figures match the interactive view pixel-for-pixel).
 
 - **One config, two renderers** — the same declarative config drives the
   interactive browser viewer and the headless PNG renderer.
+- **Multiple overlays** — load several NIfTIs at once; each gets its own control
+  row (colormap, threshold, cluster, veil, …). **Row order = draw priority**: the
+  top row is drawn on top where overlays overlap. Add with **`+ NIfTI`**, remove
+  with **✕**.
 - **Fully customisable layouts** — any grid of any anatomical views
   (`left_lateral`, `right_medial`, `dorsal`/`axial`, `anterior`/`frontal`,
   subcortical close-ups, …), 2×2 to N×M, from the CLI.
@@ -25,11 +29,15 @@ drives both, so figures match the interactive view pixel-for-pixel).
   (drop clusters below *k* voxels), positive-only.
 - **Faithful colour** — the full `cmap` colormap catalogue, auto
   sequential-vs-diverging selection, and a positive-data washout guard; an
-  on-screen colorbar runs the *same* shader pipeline so it matches the voxels.
+  on-screen colorbar (one per overlay) runs the *same* shader pipeline so it
+  matches the voxels.
 - **Blocky or smooth** voxels, pial or inflated cortex.
 - **Shared world scale** so every brain renders at the same physical size across
-  a figure, regardless of view orientation.
-- **Save-PNG button** in the GUI for a high-res capture of exactly what you see.
+  a figure, plus **per-panel zoom** (hover a panel for `+ / –`).
+- **Save-PNG** — a high-res, print-tuned capture (thinner lines, more spacing)
+  of the current view.
+- **Comic SFX** — because brains rendered like comic panels deserve the
+  occasional *BOOM!* (toggle the **Kapow** checkbox).
 
 ---
 
@@ -60,13 +68,19 @@ from glass_brains import GlassBrain
 gb = GlassBrain()                      # fsaverage cortex + subcortical structures
 gb.add_overlay("zstat.nii.gz", threshold=2.3)
 gb.show()                              # builds assets, serves, opens the browser
+
+# Several maps at once — first added is the TOP row (drawn on top):
+gb = GlassBrain()
+gb.add_overlay("contrast_A.nii.gz")
+gb.add_overlay("contrast_B.nii.gz")
+gb.show()
 ```
 
 ### Command line
 
 ```bash
-# Interactive viewer
-glass-brains show zstat.nii.gz --threshold 2.3
+# Interactive viewer (one or more NIfTIs; first = top row)
+glass-brains show contrast_A.nii.gz contrast_B.nii.gz
 
 # Headless figure → PNG (default: 9-panel, YlGnBu, smooth voxels)
 glass-brains render zstat.nii.gz -o figure.png
@@ -81,16 +95,33 @@ glass-brains render zstat.nii.gz -o figure.png \
 
 ## The interactive viewer
 
-Each panel auto-frames its content; controls live in the bottom bar (every
-slider has a type-in box and a hover tooltip):
+The control bar is split into a **global surface row** and **one row per loaded
+NIfTI**. Every slider has a type-in box and a hover tooltip.
 
-- **Cmap / Smooth / Inflate** — colormap, blocky↔smooth voxels, pial↔inflated cortex
-- **Thresh / cluster k / +only** — statistical and cluster-extent thresholds
-- **Outline / Edges** — cortex silhouette + per-voxel edges, with density/width sliders
-- **Voxel** — depth veil strength & steepness, emissive (flat colour), specular glint, shininess
-- **Light** — directional (headlight) + ambient intensity
-- **Save PNG** — download a high-res capture of the current view
-- **Load NIfTI** — drop in a new stat map without restarting
+**Surface row (applies to the whole figure):**
+
+- **`+ NIfTI`** — load one or more stat maps; each appends a new overlay row.
+- **layout** — switch 4-panel ↔ 9-panel.
+- **Save PNG** — high-res, print-tuned capture (thinner lines, more inter-panel
+  spacing than the on-screen view).
+- **Inflate / Outline** — inflated vs pial cortex; black silhouette on/off.
+- **cortex α / edge thr / line w** — cortex glass opacity, sulcal-line density, line width.
+- **Light: direct / ambient** — scene lighting (off by default; voxel colour
+  comes from emissive + a light-independent glint).
+
+**Per-overlay row (one per NIfTI):**
+
+- name + **✕** to remove · **colormap** · **Smooth** (blocky↔smooth) ·
+  **thr** (threshold) · **cluster k** (cluster-extent) · **+only** ·
+  **Edges** + **edge w** · **veil / veil log** (depth fade) ·
+  **emissive / specular / shine**.
+- **Row order = display priority** — drag-free: the higher row wins where
+  overlays overlap.
+
+**On the panels themselves:**
+
+- **Hover a panel** → a small **`+ / –`** appears top-left to rescale just that view.
+- **Kapow** (top-right checkbox) → comic SFX on click, for fun.
 
 ## CLI reference
 
@@ -128,9 +159,13 @@ glass_brains/
   viewer/          config-driven Three.js viewer
     core/          pure, unit-tested geometry/visibility/colour (node --test)
     scene/         three.js materials, passes, renderer
-    controls/      UI bindings + colorbar
+    controls/      UI bindings (surface + per-overlay rows), colorbar, comic SFX
     app/           browser + headless entry points
+  viewer/kapow/    comic SFX images
 ```
+
+(The `glass-brains show` server lets you add/remove NIfTIs live; `render` is a
+self-contained headless figure renderer.)
 
 ## Development
 

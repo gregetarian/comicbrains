@@ -105,7 +105,13 @@ function saveFigure({ engine, canvas, container, colorbar, config, saveBtn }) {
     const cssW = canvas.clientWidth;
     const basePr = window.devicePixelRatio || 1;
     const savePr = Math.min(4, Math.max(basePr, Math.ceil(3800 / cssW))); // ≳3800px wide
+    // Print look: thinner cortex lines + a bit more space between brains than the
+    // on-screen GUI (restored afterwards).
+    const saved = { ow: config.style.outline.width, margin: config.style.margin };
     try {
+        config.style.outline.width = saved.ow * 0.6;
+        config.style.margin = (saved.margin ?? 0.95) + 0.13;
+        engine.applyStyle();
         engine.setPixelRatio(savePr);
         engine.renderFrame();
         colorbar?.update();
@@ -148,6 +154,9 @@ function saveFigure({ engine, canvas, container, colorbar, config, saveBtn }) {
             setTimeout(() => URL.revokeObjectURL(a.href), 2000);
         }, 'image/png');
     } finally {
+        config.style.outline.width = saved.ow;
+        config.style.margin = saved.margin;
+        engine.applyStyle();
         engine.setPixelRatio(basePr);
         engine.renderFrame();
         if (saveBtn) saveBtn.textContent = label;
