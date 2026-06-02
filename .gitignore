@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Node (viewer dev tooling)
+node_modules/
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Claude Code local state
+.claude/
+
+# Exported viewers / render scratch
+glass_brain_viewer/
+*.tmp
+
+# Stray non-project assets
+booms/

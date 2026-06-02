@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Glass Brains 2.0</title>
+  <!-- Computer Modern (LaTeX roman) web font for the colorbar ticks; falls back to serif if offline. -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; }
+    body { background: #fff; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, sans-serif; }
+
+    #viewer { position: relative; width: 100vw; height: calc(100vh - 64px); }
+    /* canvas leaves a bottom strip free for the horizontal colorbar (never overlaps a panel).
+       Strip height is set from the colorbar size via the --cbstrip variable. */
+    canvas { position: absolute; left: 0; top: 0; width: 100%; height: calc(100% - var(--cbstrip, 52px)); }
+    body.nobar canvas { height: 100%; }
+    #loading { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 14px; color: #666; z-index: 10; }
+
+    /* on-screen horizontal colorbar (matches the voxel colours exactly), centred in the bottom strip */
+    .colorbar { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px; pointer-events: none; }
+    .colorbar canvas { position: static; border: 1px solid #d0d0d0; display: block; }
+    .colorbar-labels { display: flex; flex-direction: row; justify-content: space-between; font-size: 9px; color: #777; line-height: 1; }
+    body.nobar .colorbar { display: none; }
+
+    /* control bar */
+    #controls {
+      height: 64px; display: flex; align-items: center; gap: 16px;
+      padding: 0 14px; border-top: 1px solid #e3e3e3; background: #fafafa;
+      overflow-x: auto; white-space: nowrap;
+    }
+    .grp { display: flex; align-items: center; gap: 6px; }
+    .grp + .grp { border-left: 1px solid #e3e3e3; padding-left: 16px; }
+    .lab { font-size: 9px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
+    .sw { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+    .sw span { font-size: 8px; color: #999; }
+    input[type=range] { width: 66px; }
+    .numbox { width: 46px; margin-top: 2px; font-size: 10px; padding: 1px 3px; border: 1px solid #ccc; border-radius: 3px; text-align: center; }
+    .numbox::-webkit-inner-spin-button, .numbox::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    select, .btn { font-size: 11px; padding: 3px 6px; border: 1px solid #ccc; border-radius: 3px; background: #fff; cursor: pointer; }
+    .btn { color: #777; }
+    .btn.active { background: #444; color: #fff; border-color: #444; }
+    .file { position: relative; overflow: hidden; }
+    .file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="viewer">
+    <div id="loading">Loading brain…</div>
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="controls">
+    <div class="grp">
+      <label class="btn file">Load NIfTI<input type="file" id="c-upload" accept=".nii,.nii.gz,.gz"></label>
+      <select id="c-layout" title="Layout">
+        <option value="fourPanel">4-panel</option>
+        <option value="ninePanel">9-panel</option>
+      </select>
+      <button class="btn" id="c-save" title="Save the current view as a high-res PNG">Save PNG</button>
+    </div>
+    <div class="grp">
+      <span class="lab">Cmap</span>
+      <select id="c-colormap"></select>
+      <button class="btn" id="c-smooth">Smooth</button>
+      <button class="btn" id="c-inflate">Inflate</button>
+    </div>
+    <div class="grp">
+      <span class="lab">Thresh</span>
+      <div class="sw"><span>thr</span><input type="range" id="c-threshold" min="0" max="1" step="0.01"></div>
+      <div class="sw"><span>cluster k</span><input type="range" id="c-cluster"></div>
+      <button class="btn" id="c-posonly">+only</button>
+    </div>
+    <div class="grp">
+      <span class="lab">Outline</span>
+      <button class="btn active" id="c-outline">On</button>
+      <button class="btn active" id="c-edges">Edges</button>
+      <div class="sw"><span>cortex α</span><input type="range" id="c-cortex" min="0" max="0.3" step="0.005"></div>
+      <div class="sw"><span>edge thr</span><input type="range" id="c-outline-thresh" min="0.001" max="0.02" step="0.0005"></div>
+      <div class="sw"><span>line w</span><input type="range" id="c-outline-width" min="0.3" max="4" step="0.1"></div>
+      <div class="sw"><span>edge w</span><input type="range" id="c-edge-width" min="0.3" max="3" step="0.1"></div>
+    </div>
+    <div class="grp">
+      <span class="lab">Voxel</span>
+      <div class="sw"><span>veil</span><input type="range" id="c-veil" min="0" max="1" step="0.02"></div>
+      <div class="sw"><span>veil log</span><input type="range" id="c-veilk" min="0.1" max="20" step="0.1"></div>
+      <div class="sw"><span>emissive</span><input type="range" id="c-emissive" min="0" max="1" step="0.02"></div>
+      <div class="sw"><span>specular</span><input type="range" id="c-specular" min="0" max="0.6" step="0.01"></div>
+      <div class="sw"><span>shine</span><input type="range" id="c-shininess" min="1" max="200" step="1"></div>
+    </div>
+    <div class="grp">
+      <span class="lab">Light</span>
+      <div class="sw"><span>direct</span><input type="range" id="c-directional" min="0" max="4" step="0.05"></div>
+      <div class="sw"><span>ambient</span><input type="range" id="c-ambient" min="0" max="4" step="0.05"></div>
+    </div>
+  </div>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module">
+    const params = new URLSearchParams(location.search);
+    const entry = params.get('headless') === '1' ? './app/headless-entry.js' : './app/browser-main.js';
+    import(entry).catch((err) => {
+      console.error(err);
+      const el = document.getElementById('loading');
+      if (el) el.textContent = 'Error: ' + err.message;
+    });
+  </script>
+</body>
+</html>

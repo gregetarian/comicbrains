@@ -1,0 +1,6 @@
+{
+  "name": "glass-brains-viewer",
+  "private": true,
+  "type": "module",
+  "description": "Glass Brains 2.0 viewer — config-driven, headless-capable. The core/ modules are pure (no THREE/DOM) and unit-tested with `node --test`."
+}

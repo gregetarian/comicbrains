@@ -1,0 +1,49 @@
+[project]
+name = "glass-brains"
+version = "0.1.0"
+description = "Interactive 3D glass-brain viewer and headless figure renderer with a cel-shaded aesthetic"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "Greg Cooper", email = "gregcooper95@gmail.com" }]
+keywords = ["neuroimaging", "fmri", "brain", "visualization", "glass-brain", "fsaverage", "three.js"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Visualization",
+]
+dependencies = [
+    "nibabel>=5.0",
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "scikit-image>=0.20",
+    "trimesh>=4.0",
+    "mne>=1.5",
+    "cmap>=0.1",
+]
+
+[project.optional-dependencies]
+# Headless PNG rendering (`glass-brains render`). After install, run:
+#   python -m playwright install chromium
+render = ["playwright>=1.40"]
+dev = ["pytest", "ruff"]
+
+[project.scripts]
+glass-brains = "glass_brains.core:cli"
+
+[project.urls]
+Homepage = "https://github.com/gregetarian/comicbrains"
+Repository = "https://github.com/gregetarian/comicbrains"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["glass_brains*"]
+
+# Ship the web viewer (JS/HTML/JSON) alongside the Python package.
+[tool.setuptools.package-data]
+glass_brains = ["viewer/**/*.js", "viewer/**/*.html", "viewer/**/*.json"]
