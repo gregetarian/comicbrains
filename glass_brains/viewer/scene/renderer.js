@@ -1,10 +1,10 @@
 /**
- * renderer.js — the multi-panel engine. Browser side; contains NO layout
- * literals — everything comes from `config` + the pure core modules.
+ * renderer.js — the multi-panel, multi-overlay engine. Browser side; contains NO
+ * layout literals — everything comes from `config` + the pure core modules.
  *
- * Per panel each frame: resolve viewport (grid) → visibility (visibility) →
- * camera pose + ortho extent (framing) → per-panel headlight → opaque pass
- * (anatomy + voxels) → glass transparent pass → outline + voxel-edge passes.
+ * Each loaded NIfTI (overlay) gets its OWN voxel material + uniforms + edge pass +
+ * colour, resolved from `overlayStyle(config, i)` (per-overlay overrides on top of
+ * the global voxel template). Cortex/anatomy/lighting/outline stay global.
  */
 import * as THREE from 'three';
 import { layoutGrid } from '../core/grid.js';
@@ -12,6 +12,7 @@ import { frameContent, mergeAABB } from '../core/framing.js';
 import { normalize, sub } from '../core/units.js';
 import { visible } from '../core/visibility.js';
 import { resolveColormap, colorizeValues } from '../core/colormap.js';
+import { overlayStyle } from '../core/config-schema.js';
 import { makeGlassMaterial, makeAnatomyMaterial, makeVoxelMaterial, makeSharedVoxelUniforms } from './materials.js';
 import { OutlinePass, makeThresholdDepthMaterial } from './passes.js';
 
@@ -19,6 +20,11 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     const scene = new THREE.Scene();
     renderer.autoClear = false;
     renderer.setClearColor(new THREE.Color(config.render.background ?? '#ffffff'), 1);
+
+    const overlays = sceneModel.manifest.overlays || [];
+    const N = overlays.length;
+    config.style.overlays ||= [];
+    while (config.style.overlays.length < N) config.style.overlays.push({});
 
     // --- lighting (one directional headlight re-aimed per panel + ambient) ---
     const L = config.style.lighting;
@@ -40,24 +46,40 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         dir.shadow.normalBias = 0.6;
     }
 
-    // --- shared materials ---
+    // --- global surface/anatomy materials ---
     const glassMat = makeGlassMaterial(config.style.glass);
     const anatomyMat = makeAnatomyMaterial(config.style.anatomy);
-    const voxelUniforms = makeSharedVoxelUniforms(config.style);
-    const voxelMat = makeVoxelMaterial(config.style, voxelUniforms);
 
-    // --- place meshes, assign materials + layers + metadata ---
+    // --- per-overlay voxel materials + uniforms (overlay i → layer 1+i) ---
+    const uniforms = [], voxelMats = [];
+    for (let i = 0; i < N; i++) {
+        const os = overlayStyle(config, i);
+        const u = makeSharedVoxelUniforms({
+            positiveOnly: os.positiveOnly,
+            voxel: { veil: os.veil, emissive: os.emissive, specular: os.specular, shininess: os.shininess, clusterMin: os.clusterMin },
+        });
+        u.uMaxAbs.value = overlays[i].maxAbsValue ?? 1.0;
+        u.uThreshold.value = os.threshold ?? overlays[i].threshold ?? 0;
+        uniforms.push(u);
+        voxelMats.push(makeVoxelMaterial({}, u));
+    }
+
+    // --- place meshes, assign materials + layers + shadows ---
     for (const tm of sceneModel.meshes) {
         const m = tm.mesh;
         if (tm.meta.role === 'cortex') { m.material = glassMat; m.renderOrder = 1; m.layers.set(0); }
         else if (tm.meta.role === 'anatomy') { m.material = anatomyMat; m.renderOrder = 5; m.layers.set(0); m.receiveShadow = SH.enabled; }
-        else { m.material = voxelMat; m.renderOrder = 15; m.layers.set(1); m.castShadow = SH.enabled; m.receiveShadow = SH.enabled; } // voxels excluded from cortex outline
+        else {
+            const oi = tm.meta.overlay ?? 0;
+            m.material = voxelMats[oi] || voxelMats[0];
+            m.renderOrder = 15; m.layers.set(1 + oi);       // each overlay on its own layer
+            m.castShadow = SH.enabled; m.receiveShadow = SH.enabled;
+        }
         scene.add(m);
     }
 
-    // Downsampled world-space voxel vertices, for anchoring the depth veil to the
-    // ACTUAL nearest voxel (not a bounding-box corner, which sits in empty space
-    // under the oblique tilt and would leave the nearest voxel slightly veiled).
+    // Downsampled world voxel vertices, for anchoring the depth veil to the ACTUAL
+    // nearest voxel (not a bounding-box corner that sits in empty space under tilt).
     scene.updateMatrixWorld(true);
     {
         const v = new THREE.Vector3();
@@ -74,31 +96,29 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         }
     }
 
-    // --- colorize voxels (JS is the single colour authority) ---
-    const overlay0 = sceneModel.manifest.overlays?.[0];
-    const dataDiverging = !!overlay0?.diverging;
-    const maxAbs = overlay0?.maxAbsValue ?? 1.0;
-    voxelUniforms.uMaxAbs.value = maxAbs;
-    voxelUniforms.uThreshold.value = config.style.threshold ?? overlay0?.threshold ?? 0;
-    voxelUniforms.uClusterMin.value = config.style.voxel.clusterMin ?? 0;
-
+    // --- colorize voxels per overlay (JS is the single colour authority) ---
     function recolor() {
-        const { name, mode, divergingMapOnPositive } = resolveColormap(config.style, dataDiverging, colormaps);
-        const cmap = colormaps.get(name) || colormaps.values().next().value;
-        if (!cmap) return;
-        for (const tm of sceneModel.meshes) {
-            if (tm.meta.role !== 'voxel' || !tm.values) continue;
-            const lin = colorizeValues(tm.values, cmap, maxAbs, mode, config.style.gamma, divergingMapOnPositive);
-            tm.mesh.geometry.attributes.color.copyArray(lin);
-            tm.mesh.geometry.attributes.color.needsUpdate = true;
+        for (let i = 0; i < N; i++) {
+            const os = overlayStyle(config, i);
+            const div = !!overlays[i].diverging;
+            const { name, mode, divergingMapOnPositive } = resolveColormap(os, div, colormaps);
+            const cmap = colormaps.get(name) || colormaps.values().next().value;
+            if (!cmap) continue;
+            const mAbs = overlays[i].maxAbsValue ?? 1.0;
+            for (const tm of sceneModel.meshes) {
+                if (tm.meta.role !== 'voxel' || (tm.meta.overlay ?? 0) !== i || !tm.values) continue;
+                const lin = colorizeValues(tm.values, cmap, mAbs, mode, os.gamma, divergingMapOnPositive);
+                tm.mesh.geometry.attributes.color.copyArray(lin);
+                tm.mesh.geometry.attributes.color.needsUpdate = true;
+            }
         }
     }
     recolor();
 
-    // --- panels: one ortho camera each ---
+    // --- panels: one ortho camera each, seeing all overlay layers ---
     const panels = config.layout.panels.map((p) => {
         const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 800);
-        cam.layers.enable(1);
+        for (let i = 0; i < N; i++) cam.layers.enable(1 + i);
         return { def: p, camera: cam };
     });
 
@@ -108,35 +128,71 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     const cortexOutline = new OutlinePass(renderer, scene, maxCellW, maxCellH, {
         layer: 0, color: config.style.outline.color, width: config.style.outline.width, threshold: config.style.outline.threshold,
     });
-    const voxelEdge = new OutlinePass(renderer, scene, maxCellW, maxCellH, {
-        layer: 1, color: config.style.voxel.edges.color, opacity: config.style.voxel.edges.opacity,
-        width: config.style.voxel.edges.width, threshold: config.style.voxel.edges.threshold,
-        depthMaterial: makeThresholdDepthMaterial(voxelUniforms),
-        veil: voxelUniforms, // edges fade with the voxel veil
-    });
-    // The black cortex outline draws OVER the voxel edges, but clips itself where a
-    // voxel is genuinely in front of the surface (sampling the voxel depth target).
-    cortexOutline.outlineMaterial.uniforms.uClipDepth.value = voxelEdge.depthTarget.texture;
+    // Per-overlay voxel edge passes (each its own layer + edge style + veil).
+    const edgePasses = [];
+    for (let i = 0; i < N; i++) {
+        const os = overlayStyle(config, i);
+        edgePasses.push(new OutlinePass(renderer, scene, maxCellW, maxCellH, {
+            layer: 1 + i, color: os.edges.color, opacity: os.edges.opacity,
+            width: os.edges.width, threshold: os.edges.threshold,
+            depthMaterial: makeThresholdDepthMaterial(uniforms[i]),
+            veil: uniforms[i],
+        }));
+    }
 
-    function panelAABB(content, roleFilter) {
-        const boxes = [];
-        for (const tm of sceneModel.meshes) {
-            if (roleFilter && tm.meta.role !== roleFilter) continue;
-            if (visible(content, tm.meta, config.style)) boxes.push(tm.aabb);
+    // Combined voxel depth (nearest passing-threshold voxel across ALL overlays),
+    // for the cortex outline's depth-clip: each overlay's threshold depth material
+    // is rendered in turn into one depth-tested target so the nearest wins.
+    const pr0 = renderer.getPixelRatio();
+    const makeDepthTarget = (w, h) => new THREE.WebGLRenderTarget(Math.round(w * renderer.getPixelRatio()), Math.round(h * renderer.getPixelRatio()), {
+        minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, type: THREE.FloatType,
+    });
+    let clipTarget = makeDepthTarget(maxCellW, maxCellH);
+    const clipCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 800);
+    cortexOutline.outlineMaterial.uniforms.uClipDepth.value = clipTarget.texture;
+
+    function renderClipDepth(camera) {
+        const prev = scene.overrideMaterial;
+        renderer.setRenderTarget(clipTarget);
+        renderer.setScissorTest(false);
+        renderer.clear();                                   // clears colour (white→far) + depth
+        for (let i = 0; i < N; i++) {
+            clipCam.copy(camera); clipCam.layers.set(1 + i);
+            scene.overrideMaterial = edgePasses[i].depthMaterial;
+            renderer.render(scene, clipCam);                // depth-tested: nearest accumulates
         }
+        scene.overrideMaterial = prev;
+        renderer.setRenderTarget(null);
+    }
+
+    // --- per-frame resolved overlay styles + visibility helpers ---
+    let osR = [];                                           // resolved overlay styles (per frame)
+    function refreshResolved() { osR = []; for (let i = 0; i < N; i++) osR.push(overlayStyle(config, i)); }
+    refreshResolved();
+    const globalVis = () => ({ cortexSurface: config.style.cortexSurface, voxel: { representation: config.style.voxel.representation } });
+    function visStyleFor(meta) {
+        if (meta.role === 'voxel') {
+            const os = osR[meta.overlay ?? 0];
+            return { cortexSurface: config.style.cortexSurface, voxel: { representation: os ? os.representation : config.style.voxel.representation } };
+        }
+        return globalVis();
+    }
+    const meshVisible = (content, meta) => visible(content, meta, visStyleFor(meta));
+
+    function panelAABB(content) {
+        const boxes = [];
+        for (const tm of sceneModel.meshes) if (meshVisible(content, tm.meta)) boxes.push(tm.aabb);
         return mergeAABB(boxes);
     }
-
     function applyVisibility(content) {
-        for (const tm of sceneModel.meshes) tm.mesh.visible = visible(content, tm.meta, config.style);
+        for (const tm of sceneModel.meshes) tm.mesh.visible = meshVisible(content, tm.meta);
     }
-
-    // View-space depth range of the visible voxels (nearest/farthest real vertex).
-    function voxelDepthRange(content, camPos, fwd) {
+    // View-space depth range of one overlay's visible voxels (nearest/farthest vertex).
+    function voxelDepthRange(content, oi, camPos, fwd) {
         let near = Infinity, far = -Infinity;
         for (const tm of sceneModel.meshes) {
-            if (tm.meta.role !== 'voxel' || !tm.depthSamples) continue;
-            if (!visible(content, tm.meta, config.style)) continue;
+            if (tm.meta.role !== 'voxel' || (tm.meta.overlay ?? 0) !== oi || !tm.depthSamples) continue;
+            if (!meshVisible(content, tm.meta)) continue;
             const s = tm.depthSamples;
             for (let i = 0; i < s.length; i += 3) {
                 const d = (s[i] - camPos[0]) * fwd[0] + (s[i + 1] - camPos[1]) * fwd[1] + (s[i + 2] - camPos[2]) * fwd[2];
@@ -148,13 +204,13 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     }
 
     function renderFrame() {
-        // Clear the FULL buffer: a prior frame's outline pass leaves the scissor
-        // test enabled, which would otherwise restrict clear() to one panel and
-        // let old frames accumulate (visible as doubled/ghosted geometry).
+        // Full-buffer clear (a prior frame's outline pass leaves the scissor test on,
+        // which would restrict clear() to one panel and ghost old frames otherwise).
         renderer.setScissorTest(false);
         renderer.clear();
+        refreshResolved();
 
-        // Pass 1 — resolve framing for every panel.
+        // Pass 1 — framing per panel.
         const frames = panels.map(({ def, camera }) => {
             const rect = grid.rect(def.cell.row, def.cell.col, def.rowSpan, def.colSpan);
             const aabb = panelAABB(def.content);
@@ -163,11 +219,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             return { def, camera, rect, fr };
         });
 
-        // Shared world scale: panels with framing.fit==='shared' adopt a common
-        // mm-per-pixel, so each brain is the SAME physical size across the figure
-        // (as if one 3D scene). The view with the largest footprint fills its
-        // cell; the rest render smaller, centred. Subcortical close-ups (fit
-        // 'auto') keep their own zoom.
+        // Shared world scale: fit:'shared' panels adopt a common mm-per-pixel.
         let sharedMmPx = 0;
         for (const { def, rect, fr } of frames)
             if (def.framing.fit === 'shared') sharedMmPx = Math.max(sharedMmPx, fr.ext / (rect.h / 2));
@@ -192,23 +244,17 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             camera.updateMatrixWorld(true);
 
             applyVisibility(def.content);
-            // per-panel anatomy translucency (e.g. subcort views show voxels through anatomy)
             if (def.anatomyOpacity != null) { anatomyMat.opacity = def.anatomyOpacity; anatomyMat.transparent = def.anatomyOpacity < 1; }
             else { anatomyMat.opacity = config.style.anatomy.opacity; anatomyMat.transparent = anatomyMat.opacity < 1; }
-            // Depth-veil range anchored to the ACTUAL nearest/farthest voxel
-            // vertex, so the closest voxel is truly un-veiled (zf=0) and veiling
-            // scales back from there. Falls back to content range if no voxels.
+
+            // Per-overlay depth-veil range anchored to that overlay's nearest voxel.
             const fwd = normalize(sub(fr.lookAt, fr.position));
-            const dr = voxelDepthRange(def.content, fr.position, fwd);
-            if (isFinite(dr.near)) {
-                voxelUniforms.uNearZ.value = dr.near;
-                voxelUniforms.uFarZ.value = Math.max(dr.far, dr.near + 1e-3);
-            } else {
-                voxelUniforms.uNearZ.value = fr.nearZ;
-                voxelUniforms.uFarZ.value = fr.farZ;
+            for (let i = 0; i < N; i++) {
+                const drng = voxelDepthRange(def.content, i, fr.position, fwd);
+                if (isFinite(drng.near)) { uniforms[i].uNearZ.value = drng.near; uniforms[i].uFarZ.value = Math.max(drng.far, drng.near + 1e-3); }
+                else { uniforms[i].uNearZ.value = fr.nearZ; uniforms[i].uFarZ.value = fr.farZ; }
             }
-            // headlight along the camera axis; for shadows, offset it to one side
-            // so voxel-on-voxel shadows are visible (depth cue).
+
             if (L.headlight) {
                 dir.position.copy(camera.position);
                 if (SH.enabled) {
@@ -227,12 +273,15 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             renderer.setScissorTest(true);
             renderer.render(scene, camera);
 
-            // Voxel edges first (underneath); then the black surface outline on top,
-            // depth-clipped so voxels genuinely in front still show their edges.
-            const edgesOn = config.style.voxel.edges.enabled;
-            if (edgesOn) voxelEdge.update(camera, rect.x, rect.y, rect.w, rect.h);
+            // Per-overlay voxel edges first (underneath), then black cortex outline on
+            // top — depth-clipped so any voxel genuinely in front shows its own edge.
+            let anyEdges = false;
+            for (let i = 0; i < N; i++) {
+                if (osR[i].edges.enabled) { edgePasses[i].update(camera, rect.x, rect.y, rect.w, rect.h); anyEdges = true; }
+            }
             if (config.style.outline.enabled) {
-                cortexOutline.outlineMaterial.uniforms.uClipApply.value = edgesOn ? 1.0 : 0.0;
+                if (anyEdges && N > 0) renderClipDepth(camera);
+                cortexOutline.outlineMaterial.uniforms.uClipApply.value = (anyEdges && N > 0) ? 1.0 : 0.0;
                 cortexOutline.update(camera, rect.x, rect.y, rect.w, rect.h);
             }
         }
@@ -243,43 +292,46 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         renderer.setSize(w, h);
         grid = layoutGrid({ width, height, ...config.layout.grid });
         cortexOutline.setSize(w, h);
-        voxelEdge.setSize(w, h);
+        for (const ep of edgePasses) ep.setSize(w, h);
+        clipTarget.setSize(Math.round(w * renderer.getPixelRatio()), Math.round(h * renderer.getPixelRatio()));
     }
 
-    // Re-render at a different device-pixel-ratio (used by the GUI Save-PNG button
-    // to supersample a high-res figure, then restore). Keeps the outline passes
-    // in sync so their depth targets match the new resolution.
     function setPixelRatio(pr) {
         renderer.setPixelRatio(pr);
         renderer.setSize(width, height);
-        cortexOutline.pr = pr; voxelEdge.pr = pr;
-        cortexOutline.setSize(width, height);
-        voxelEdge.setSize(width, height);
+        cortexOutline.pr = pr; cortexOutline.setSize(width, height);
+        for (const ep of edgePasses) { ep.pr = pr; ep.setSize(width, height); }
+        clipTarget.setSize(Math.round(width * pr), Math.round(height * pr));
     }
 
-    // Push the current config.style to live materials/uniforms/lights. The
-    // per-frame parts (visibility, framing, outline on/off, anatomy opacity) are
-    // read straight from config each frame; this handles the one-time uniforms.
+    // Push current config.style to live uniforms/materials/lights (global + per-overlay).
     function applyStyle() {
         const s = config.style;
         dir.intensity = s.lighting.directional;
         amb.intensity = s.lighting.ambient;
-        voxelUniforms.uGlintAmt.value = s.voxel.specular;
-        voxelUniforms.uGlintPow.value = Math.max(1, s.voxel.shininess);
-        voxelUniforms.uVeilStrength.value = s.voxel.veil.strength;
-        voxelUniforms.uVeilK.value = s.voxel.veil.k;
-        voxelUniforms.uEmissiveBoost.value = s.voxel.emissive;
-        voxelUniforms.uThreshold.value = s.threshold ?? (overlay0?.threshold ?? 0);
-        voxelUniforms.uPositiveOnly.value = s.positiveOnly ? 1 : 0;
-        voxelUniforms.uClusterMin.value = s.voxel.clusterMin ?? 0;
         glassMat.uniforms.uMaxOpacity.value = s.glass.maxOpacity;
         cortexOutline.outlineMaterial.uniforms.uLineWidth.value = s.outline.width;
         cortexOutline.outlineMaterial.uniforms.uThreshold.value = s.outline.threshold;
-        voxelEdge.outlineMaterial.uniforms.uOpacity.value = s.voxel.edges.opacity;
-        voxelEdge.outlineMaterial.uniforms.uLineWidth.value = s.voxel.edges.width;
+        for (let i = 0; i < N; i++) {
+            const os = overlayStyle(config, i), u = uniforms[i];
+            u.uGlintAmt.value = os.specular;
+            u.uGlintPow.value = Math.max(1, os.shininess);
+            u.uVeilStrength.value = os.veil.strength;
+            u.uVeilK.value = os.veil.k;
+            u.uEmissiveBoost.value = os.emissive;
+            u.uThreshold.value = os.threshold ?? overlays[i].threshold ?? 0;
+            u.uPositiveOnly.value = os.positiveOnly ? 1 : 0;
+            u.uClusterMin.value = os.clusterMin ?? 0;
+            const em = edgePasses[i].outlineMaterial.uniforms;
+            em.uOpacity.value = os.edges.opacity;
+            em.uLineWidth.value = os.edges.width;
+        }
     }
 
-    function setColormap(name) { config.style.colormap = name; recolor(); }
+    function setColormap(name, i = 0) {
+        (config.style.overlays[i] ||= {}).colormap = name;
+        recolor();
+    }
 
     function getPanelRects() {
         return panels.map(({ def }) => {
@@ -288,5 +340,9 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         });
     }
 
-    return { scene, renderFrame, resize, setPixelRatio, getPanelRects, recolor, applyStyle, setColormap, config, renderer, THREE, sceneModel, _internals: { voxelUniforms, glassMat, anatomyMat, voxelMat, dir, amb } };
+    return {
+        scene, renderFrame, resize, setPixelRatio, getPanelRects, recolor, applyStyle, setColormap,
+        overlays, config, renderer, THREE, sceneModel,
+        _internals: { uniforms, glassMat, anatomyMat, voxelMats, dir, amb },
+    };
 }

@@ -60,72 +60,63 @@ class GlassBrainHandler(http.server.SimpleHTTPRequestHandler):
         gb = self.__class__.glass_brain
         export_dir = Path(self.__class__.export_dir)
 
-        # Clear existing overlays and add new one
-        gb.overlays.clear()
+        # APPEND the new overlay (keep existing ones — multiple NIfTIs coexist).
         gb.add_overlay(tmp.name, threshold=threshold, cmap=cmap, name=name)
 
-        # Re-export overlay files (cortex/subcort already exported)
+        # Re-export ALL overlay files (cortex/subcort already exported).
         import shutil
-        import numpy as np
-        from .overlays import build_structure_overlays, classify_overlay_voxels
-        from .export import export_mesh, write_scene_json
-
-        ov = gb.overlays[0]
-        entry = {
-            'name': ov['name'],
-            'colormap': ov['cmap'],
-            'threshold': ov['threshold'],
-            'maxAbsValue': ov['max_abs_value'],
-            'maxClusterSize': ov.get('max_cluster', 0),
-            'diverging': bool(ov['diverging']),
-            'role': 'overlay',
-            'structureOverlays': {},
-        }
+        from .export import export_mesh
 
         overlay_dir = export_dir / 'overlay'
-        # Clean old overlay files
         if overlay_dir.exists():
             shutil.rmtree(overlay_dir)
         overlay_dir.mkdir(parents=True, exist_ok=True)
 
-        for cat, so in ov['structure_overlays'].items():
-            mesh_rel = f"overlay/{ov['name']}_{cat}.glb"
-            vals_rel = f"overlay/{ov['name']}_{cat}_values.json"
-            clu_rel = f"overlay/{ov['name']}_{cat}_clusters.json"
-            export_mesh(so['mesh'], export_dir / mesh_rel)
-            with open(export_dir / vals_rel, 'w') as f:
-                json.dump(so['values'], f)
-            with open(export_dir / clu_rel, 'w') as f:
-                json.dump(so['clusters'], f)
-            cat_entry = {'mesh': mesh_rel, 'values': vals_rel, 'clusters': clu_rel}
-            if 'mesh_smooth' in so:
-                smesh_rel = f"overlay/{ov['name']}_{cat}_smooth.glb"
-                svals_rel = f"overlay/{ov['name']}_{cat}_smooth_values.json"
-                sclu_rel = f"overlay/{ov['name']}_{cat}_smooth_clusters.json"
-                export_mesh(so['mesh_smooth'], export_dir / smesh_rel)
-                with open(export_dir / svals_rel, 'w') as f:
-                    json.dump(so['values_smooth'], f)
-                with open(export_dir / sclu_rel, 'w') as f:
-                    json.dump(so['clusters_smooth'], f)
-                cat_entry['meshSmooth'] = smesh_rel
-                cat_entry['valuesSmooth'] = svals_rel
-                cat_entry['clustersSmooth'] = sclu_rel
-            entry['structureOverlays'][cat] = cat_entry
+        overlay_entries = []
+        for i, ov in enumerate(gb.overlays):
+            entry = {
+                'name': ov['name'],
+                'colormap': ov['cmap'],
+                'threshold': ov['threshold'],
+                'maxAbsValue': ov['max_abs_value'],
+                'maxClusterSize': ov.get('max_cluster', 0),
+                'diverging': bool(ov['diverging']),
+                'role': 'overlay',
+                'structureOverlays': {},
+            }
+            for cat, so in ov['structure_overlays'].items():
+                base = f"overlay/o{i}_{cat}"          # index-prefixed → unique across overlays
+                export_mesh(so['mesh'], export_dir / f"{base}.glb")
+                with open(export_dir / f"{base}_values.json", 'w') as f:
+                    json.dump(so['values'], f)
+                with open(export_dir / f"{base}_clusters.json", 'w') as f:
+                    json.dump(so['clusters'], f)
+                cat_entry = {'mesh': f"{base}.glb", 'values': f"{base}_values.json", 'clusters': f"{base}_clusters.json"}
+                if 'mesh_smooth' in so:
+                    export_mesh(so['mesh_smooth'], export_dir / f"{base}_smooth.glb")
+                    with open(export_dir / f"{base}_smooth_values.json", 'w') as f:
+                        json.dump(so['values_smooth'], f)
+                    with open(export_dir / f"{base}_smooth_clusters.json", 'w') as f:
+                        json.dump(so['clusters_smooth'], f)
+                    cat_entry['meshSmooth'] = f"{base}_smooth.glb"
+                    cat_entry['valuesSmooth'] = f"{base}_smooth_values.json"
+                    cat_entry['clustersSmooth'] = f"{base}_smooth_clusters.json"
+                entry['structureOverlays'][cat] = cat_entry
+            overlay_entries.append(entry)
 
-        # Update scene.json
+        # Update scene.json with ALL overlays
         scene_path = export_dir / 'scene.json'
         with open(scene_path) as f:
             scene = json.load(f)
-        scene['overlays'] = [entry]
+        scene['overlays'] = overlay_entries
         with open(scene_path, 'w') as f:
             json.dump(scene, f, indent=2)
 
-        # Respond with the new overlay entry
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Access-Control-Allow-Origin', '*')
         self.end_headers()
-        self.wfile.write(json.dumps({'ok': True, 'overlay': entry}).encode())
+        self.wfile.write(json.dumps({'ok': True, 'count': len(overlay_entries)}).encode())
 
         # Cleanup temp file
         Path(tmp.name).unlink(missing_ok=True)

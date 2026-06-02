@@ -35,6 +35,10 @@ export const DEFAULTS = {
             veil: { strength: 0.66, k: 7.4, color: '#ffffff' },
             edges: { enabled: true, color: '#808080', opacity: 1.0, width: 1.9, threshold: 0.003 },
         },
+        // Per-NIfTI overrides. Each entry overrides the voxel/colour fields above
+        // for one overlay (by index); empty/absent → inherit the globals. The GUI
+        // renders one control row per entry; the CLI usually has a single overlay.
+        overlays: [],
         glass: { color: '#ffffff', maxOpacity: 0.0, minOpacity: 0.0, fresnelPower: 2.5, celBands: 3 },
         anatomy: { color: '#ffffff', maxOpacity: 0.14, opacity: 1.0 },
         // Higher threshold = fewer/weaker cortex lines (less sulcal density).
@@ -57,6 +61,40 @@ export const DEFAULTS = {
 };
 
 const isObj = (x) => x && typeof x === 'object' && !Array.isArray(x);
+
+/**
+ * Resolve the effective voxel/colour style for overlay `i`: the per-overlay
+ * overrides in `style.overlays[i]` merged over the global `style` template.
+ * Single source of truth so the renderer, colorbar, and controls agree.
+ */
+export function overlayStyle(config, i = 0) {
+    const s = config.style || {};
+    const v = s.voxel || {};
+    const o = (s.overlays && s.overlays[i]) || {};
+    const ov = o.voxel || {};
+    return {
+        colormap: o.colormap ?? s.colormap,
+        colormapMode: o.colormapMode ?? s.colormapMode,
+        threshold: o.threshold ?? s.threshold,
+        positiveOnly: o.positiveOnly ?? s.positiveOnly,
+        gamma: o.gamma ?? s.gamma,
+        representation: ov.representation ?? v.representation,
+        clusterMin: ov.clusterMin ?? v.clusterMin,
+        shininess: ov.shininess ?? v.shininess,
+        specular: ov.specular ?? v.specular,
+        emissive: ov.emissive ?? v.emissive,
+        veil: { ...(v.veil || {}), ...(ov.veil || {}) },
+        edges: { ...(v.edges || {}), ...(ov.edges || {}) },
+    };
+}
+
+/** Mutate config.style.overlays[i] with a (possibly nested) override patch. */
+export function setOverlayStyle(config, i, patch) {
+    const arr = (config.style.overlays ||= []);
+    while (arr.length <= i) arr.push({});
+    arr[i] = deepMerge(arr[i] || {}, patch);
+    return arr[i];
+}
 
 /** Deep-merge `src` onto a clone of `base` (arrays replace, objects merge). */
 export function deepMerge(base, src) {

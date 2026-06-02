@@ -77,8 +77,10 @@ export async function loadScene(manifestUrl) {
         push(m, { role: 'anatomy', hemisphere: hemiOfCategory(cat), structure: name, category: cat, variant: null });
     }
 
-    // Overlay voxels — blocky + smooth variants
-    for (const ov of manifest.overlays || []) {
+    // Overlay voxels — blocky + smooth variants, tagged with their overlay index
+    const overlayList = manifest.overlays || [];
+    for (let oi = 0; oi < overlayList.length; oi++) {
+        const ov = overlayList[oi];
         for (const [cat, so] of Object.entries(ov.structureOverlays || {})) {
             const hemi = hemiOfCategory(cat);
             const variants = [['blocky', so.mesh, so.values, so.clusters],
@@ -90,7 +92,7 @@ export async function loadScene(manifestUrl) {
                 const arr = attachValues(m, vals);
                 const clu = cluUrl ? await fetch(cluUrl).then((r) => r.json()).catch(() => []) : [];
                 attachClusters(m, clu);
-                push(m, { role: 'voxel', hemisphere: hemi, structure: `${ov.name}_${cat}`, category: cat, variant }, arr);
+                push(m, { role: 'voxel', overlay: oi, hemisphere: hemi, structure: `${ov.name}_${cat}`, category: cat, variant }, arr);
             }
         }
     }

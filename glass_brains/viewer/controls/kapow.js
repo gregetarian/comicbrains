@@ -4,7 +4,7 @@
  * "BOOM!/POW/THWACK" pops up at the cursor and fades away, like a comic SFX.
  * Toggled by the top-right "Kapow" checkbox.
  */
-const IMGS = ['kapow/1.png', 'kapow/2.png', 'kapow/3.png', 'kapow/4.png'];
+const IMGS = ['kapow/1.png', 'kapow/2.png', 'kapow/3.png', 'kapow/4.png', 'kapow/5.png'];
 IMGS.forEach((s) => { const im = new Image(); im.src = s; });   // preload
 
 export function initKapow(checkbox) {

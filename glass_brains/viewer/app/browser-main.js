@@ -34,7 +34,7 @@ async function main() {
     // the renderer is sized to the panel area (canvas height = container - strip).
     const showColorbar = config.render.colorbar !== false;
     document.body.classList.toggle('nobar', !showColorbar);
-    applyStrip(config);
+    applyStrip(config, sceneModel.manifest.overlays?.length);
 
     const container = document.getElementById('viewer');
     const canvas = document.getElementById('canvas');
@@ -63,11 +63,13 @@ async function main() {
     window.__engine = engine; // debug handle
 }
 
-/** Reserve a bottom strip sized to the colorbar (bar + ticks + padding). */
-function applyStrip(config) {
+/** Reserve a bottom strip sized to the colorbar(s) (one bar per overlay). */
+function applyStrip(config, nOverlays) {
     const r = config.render || {};
-    const strip = r.colorbar === false ? 0 : (r.colorbarHeight ?? 14) + (r.colorbarFontSize ?? 11) + 28;
-    document.documentElement.style.setProperty('--cbstrip', strip + 'px');
+    if (r.colorbar === false) { document.documentElement.style.setProperty('--cbstrip', '0px'); return; }
+    const n = Math.max(1, nOverlays || 1);
+    const per = (r.colorbarHeight ?? 14) + (r.colorbarFontSize ?? 11) + (n > 1 ? 16 : 8);
+    document.documentElement.style.setProperty('--cbstrip', (n * per + 16) + 'px');
 }
 
 /** Save the current view as a high-res PNG: supersample the WebGL panels, then

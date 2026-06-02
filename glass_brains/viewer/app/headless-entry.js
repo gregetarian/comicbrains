@@ -29,8 +29,9 @@ async function main() {
     const kt = document.querySelector('.kapow-toggle'); if (kt) kt.style.display = 'none';
     const showColorbar = config.render.colorbar !== false;
     document.body.classList.toggle('nobar', !showColorbar);   // before measuring the canvas
-    { const r = config.render; const strip = showColorbar ? (r.colorbarHeight ?? 14) + (r.colorbarFontSize ?? 11) + 28 : 0;
-      document.documentElement.style.setProperty('--cbstrip', strip + 'px'); }
+    { const r = config.render; const n = Math.max(1, sceneModel.manifest.overlays?.length || 1);
+      const per = (r.colorbarHeight ?? 14) + (r.colorbarFontSize ?? 11) + (n > 1 ? 16 : 8);
+      document.documentElement.style.setProperty('--cbstrip', showColorbar ? (n * per + 16) + 'px' : '0px'); }
     const container = document.getElementById('viewer');
     const W = config.render.width, H = config.render.height, pr = config.render.pixelRatio || 2;
     container.style.width = W + 'px'; container.style.height = H + 'px';
