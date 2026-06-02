@@ -52,6 +52,31 @@ async function main() {
     if (saveBtn) saveBtn.addEventListener('click', () =>
         saveFigure({ engine, canvas, container, colorbar, config, saveBtn }));
 
+    // --- per-panel zoom: + / - buttons at each panel's top-left, shown on hover ---
+    const zoomEls = engine.getPanelRects().map((p, i) => {
+        const el = document.createElement('div');
+        el.className = 'panel-zoom';
+        const plus = document.createElement('button'); plus.textContent = '+'; plus.title = 'Zoom in';
+        const minus = document.createElement('button'); minus.textContent = '–'; minus.title = 'Zoom out';
+        plus.addEventListener('click', (e) => { e.stopPropagation(); engine.zoomPanel(i, 1.15); });
+        minus.addEventListener('click', (e) => { e.stopPropagation(); engine.zoomPanel(i, 1 / 1.15); });
+        el.append(plus, minus);
+        container.appendChild(el);
+        return el;
+    });
+    const placeZoom = () => engine.getPanelRects().forEach((p, i) => {
+        zoomEls[i].style.left = (p.cssLeft + 6) + 'px';
+        zoomEls[i].style.top = (p.cssTop + 6) + 'px';
+    });
+    placeZoom();
+    container.addEventListener('mousemove', (e) => {
+        const r = container.getBoundingClientRect();
+        const x = e.clientX - r.left, y = e.clientY - r.top;
+        engine.getPanelRects().forEach((p, i) =>
+            zoomEls[i].classList.toggle('show', x >= p.cssLeft && x < p.cssLeft + p.w && y >= p.cssTop && y < p.cssTop + p.h));
+    });
+    container.addEventListener('mouseleave', () => zoomEls.forEach((el) => el.classList.remove('show')));
+
     // Robust sizing: reserve the bottom strip from the MEASURED colorbar height,
     // then keep the renderer synced to the actual canvas via a ResizeObserver. This
     // survives control-row reflow, overlay add/remove, window resize, and the async
@@ -60,7 +85,7 @@ async function main() {
         const strip = (!colorbar) ? 0 : Math.ceil(colorbar.el.getBoundingClientRect().height) + 22;
         document.documentElement.style.setProperty('--cbstrip', strip + 'px');
     };
-    const fit = () => { const w = canvas.clientWidth, h = canvas.clientHeight; if (w > 0 && h > 0) engine.resize(w, h); };
+    const fit = () => { const w = canvas.clientWidth, h = canvas.clientHeight; if (w > 0 && h > 0) { engine.resize(w, h); placeZoom(); } };
     syncStrip(); fit();
     new ResizeObserver(fit).observe(canvas);     // control-row reflow / overlay add-remove
     window.addEventListener('resize', fit);      // window/viewport resize

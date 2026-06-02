@@ -125,7 +125,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     const panels = config.layout.panels.map((p) => {
         const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 800);
         for (let i = 0; i < N; i++) cam.layers.enable(1 + i);
-        return { def: p, camera: cam };
+        return { def: p, camera: cam, zoom: p.zoom || 1 };   // zoom: live per-panel rescale
     });
 
     // --- grid + outline passes ---
@@ -217,12 +217,13 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         refreshResolved();
 
         // Pass 1 — framing per panel.
-        const frames = panels.map(({ def, camera }) => {
+        const frames = panels.map((panel) => {
+            const { def, camera } = panel;
             const rect = grid.rect(def.cell.row, def.cell.col, def.rowSpan, def.colSpan);
             const aabb = panelAABB(def.content);
             const fr = frameContent(aabb, def.camera, rect.aspect,
                 { ...def.framing, margin: config.style.margin ?? def.framing.margin, tilt: config.style.tilt });
-            return { def, camera, rect, fr };
+            return { panel, def, camera, rect, fr };
         });
 
         // Shared world scale: fit:'shared' panels adopt a common mm-per-pixel.
@@ -237,6 +238,17 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
                 fr.left = -ext * rect.aspect; fr.right = ext * rect.aspect;
                 fr.top = ext; fr.bottom = -ext;
             }
+        }
+
+        // Per-panel manual zoom (the hover +/- controls): shrink the extent to
+        // zoom in. Applied after the shared scale so it's a manual override.
+        for (const { panel, rect, fr } of frames) {
+            const z = panel.zoom || 1;
+            if (z === 1) continue;
+            const ext = fr.ext / z;
+            fr.ext = ext;
+            fr.left = -ext * rect.aspect; fr.right = ext * rect.aspect;
+            fr.top = ext; fr.bottom = -ext;
         }
 
         // Pass 2 — render each panel.
@@ -346,8 +358,14 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         });
     }
 
+    // Multiply panel `i`'s zoom (the hover +/- controls), clamped to a sane range.
+    function zoomPanel(i, factor) {
+        const p = panels[i]; if (!p) return;
+        p.zoom = Math.min(8, Math.max(0.25, (p.zoom || 1) * factor));
+    }
+
     return {
-        scene, renderFrame, resize, setPixelRatio, getPanelRects, recolor, applyStyle, setColormap,
+        scene, renderFrame, resize, setPixelRatio, getPanelRects, zoomPanel, recolor, applyStyle, setColormap,
         overlays, config, renderer, THREE, sceneModel,
         _internals: { uniforms, glassMat, anatomyMat, voxelMats, dir, amb },
     };
