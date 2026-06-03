@@ -5,10 +5,11 @@ volumetric neuroimaging statistics, with a clean cel-shaded aesthetic: a
 translucent fresnel cortex, opaque self-occluding stat voxels, live-threshold
 silhouette edges, and a depth "veil" that fades deep voxels toward white.
 
-The Python side turns a NIfTI stat map + fsaverage surfaces into GLB meshes and
-a `scene.json`; a config-driven Three.js viewer renders multi-panel brain views
-either **interactively in the browser** or **headlessly to a PNG** (one config
-drives both, so figures match the interactive view pixel-for-pixel).
+One Python pipeline turns a NIfTI stat map into per-structure geometry; a single
+config-driven Three.js viewer renders multi-panel brain views **interactively in the
+browser** (locally or on GitHub Pages — the meshing runs client-side via Pyodide, no
+backend) or **headlessly to a PNG** (the same pipeline in-process). One backend, one
+renderer — so the figure matches the interactive view pixel-for-pixel.
 
 ![Glass Brains 2.0 — nine-panel view](figures/9panel_default.png)
 
@@ -49,50 +50,44 @@ drives both, so figures match the interactive view pixel-for-pixel).
 ```bash
 git clone https://github.com/gregetarian/comicbrains
 cd comicbrains
-pip install -e .
+pip install -e .                 # runtime: nibabel/numpy/scipy/scikit-image (the pipeline)
 
-# For headless figure rendering (glass-brains render):
+# Headless figure rendering (glass-brains render):
 pip install -e ".[render]"
 python -m playwright install chromium
+
+# Only to RE-BAKE the fsaverage template (glass-brains bake) — most users never need this:
+pip install -e ".[bake]"         # adds trimesh/mne/cmap
 ```
 
-The first run fetches the `fsaverage` template via MNE
-(`mne.datasets.fetch_fsaverage`) and caches it under `~/mne_data/`.
+The fsaverage template is **pre-baked** and committed under `glass_brains/web/data/`,
+so normal use needs no `mne`/fsaverage download — only `glass-brains bake` fetches
+fsaverage via MNE (cached under `~/mne_data/`).
 
 ---
 
 ## Quickstart
 
-### Python API
-
-```python
-from glass_brains import GlassBrain
-
-gb = GlassBrain()                      # fsaverage cortex + subcortical structures
-gb.add_overlay("zstat.nii.gz", threshold=2.3)
-gb.show()                              # builds assets, serves, opens the browser
-
-# Several maps at once — first added is the TOP row (drawn on top):
-gb = GlassBrain()
-gb.add_overlay("contrast_A.nii.gz")
-gb.add_overlay("contrast_B.nii.gz")
-gb.show()
-```
-
-### Command line
-
 ```bash
-# Interactive viewer (one or more NIfTIs; first = top row)
-glass-brains show contrast_A.nii.gz contrast_B.nii.gz
+# Interactive viewer — serves the local site + opens the browser. Drag NIfTIs in;
+# they're meshed in-browser via Pyodide (identical to the GitHub Pages site).
+glass-brains open
 
-# Headless figure → PNG (default: 9-panel, YlGnBu, smooth voxels)
+# Headless figure → PNG (default: 9-panel, YlGnBu, smooth voxels). Writes a clean
+# full-size brain PNG + a separate <out>_colorbars.png legend.
 glass-brains render zstat.nii.gz -o figure.png
 
-# Custom layout: L/R lateral on top, axial + frontal on the bottom
+# Custom layout: L/R lateral on top, axial + frontal on the bottom; extra smoothing.
 glass-brains render zstat.nii.gz -o figure.png \
     --grid 2x2 --views left_lateral,right_lateral,axial,frontal \
-    --cmap YlGnBu -k 100 --width 1600 --height 1000
+    --cmap YlGnBu -k 100 --smooth 6 --width 1600 --height 1000
+
+# Re-bake the fsaverage template assets into web/data/ (one-time; needs the [bake] extra)
+glass-brains bake
 ```
+
+> **Hosted:** the same viewer is a static site at `glass_brains/web/`, deployed to
+> GitHub Pages — upload a NIfTI in the browser, no install required.
 
 ---
 
@@ -103,8 +98,10 @@ NIfTI**. Every slider has a type-in box and a hover tooltip.
 
 **Surface row (applies to the whole figure):**
 
-- **`+ NIfTI`** — load one or more stat maps; each appends a new overlay row.
-- **layout** — switch 4-panel ↔ 9-panel.
+- **`+ NIfTI`** — load one or more stat maps (meshed in-browser via Pyodide; the first
+  upload fetches the ~30 MB scientific stack once). Each appends a new overlay row.
+- **Copy CLI** — copy a `glass-brains render` command that reproduces the current view.
+- **layout** — switch 4-panel / 9-panel / overview.
 - **Save brain** — high-res, print-tuned capture of the brains only (no colorbars,
   full canvas — never squashed by a stack of bars).
 - **Save bars** — the colorbars on their own as a separate legend image.
@@ -154,33 +151,43 @@ depth-edge silhouette passes, headless Playwright capture).
 
 ```
 glass_brains/
-  core.py          GlassBrain API + `show`/`render` CLI
-  surfaces.py      fsaverage cortex load + inflation
-  subcortical.py   subcortical/cerebellar surface extraction
-  overlays.py      stat-map → per-structure voxel/smooth meshes, cluster sizes
-  colormaps.py     cmap → JSON LUTs for the viewer
-  export.py        GLB + scene.json writers
-  render.py        headless layout builder + Playwright PNG renderer
-  server.py        dev server (live NIfTI upload)
-  viewer/          config-driven Three.js viewer
+  pipeline.py      THE backend: NIfTI → per-structure geometry ARRAYS. Pure
+                   numpy/scipy/scikit-image/nibabel — the SAME file runs in CPython
+                   (CLI) and in Pyodide (browser, a byte-identical copy in web/pyodide/).
+  arrays.py        write a processed overlay as one .bin + bufferLayout (for the CLI render)
+  core.py          GlassBrain (template loader for the bake) + `open`/`bake`/`render` CLI
+  render.py        headless layout builder + Playwright PNG renderer (in-process pipeline)
+  bake.py          one-time fsaverage template bake → web/data/ (needs the [bake] extra)
+  surfaces.py / subcortical.py / colormaps.py / export.py   bake-only (mne/trimesh/cmap)
+  web/             THE single Three.js viewer — served by Pages, by `glass-brains open`,
+                   and shipped in the wheel:
+    index.html · app/main.js (one shell; ?headless=1 for render)
     core/          pure, unit-tested geometry/visibility/colour (node --test)
-    scene/         three.js materials, passes, renderer
-    controls/      UI bindings (surface + per-overlay rows), colorbar, comic SFX
-    app/           browser + headless entry points
-  viewer/kapow/    comic SFX images
+    scene/         materials, passes, renderer, asset-loader (GLB template + array overlays)
+    controls/      UI bindings, colorbar, Copy-CLI, comic SFX
+    pyodide/       bootstrap.js + pipeline.py (copy of glass_brains/pipeline.py)
+    data/          baked template (cortex/subcortical GLB, colormaps, aseg) + demo + nibabel wheel
 ```
 
-(The `glass-brains show` server lets you add/remove NIfTIs live; `render` is a
-self-contained headless figure renderer.)
+**One backend, one renderer, three ways to run it.** `glass_brains/pipeline.py` is the
+only per-upload meshing code; `glass_brains/web/` is the only viewer. They power:
+`glass-brains render` (headless PNG, pipeline in-process), `glass-brains open` (local
+interactive — serves `web/`, meshing in-browser via Pyodide), and the GitHub Pages site
+(the same `web/`). The fixed fsaverage template is baked once (`glass-brains bake`) and
+committed under `web/data/`.
 
 ## Development
 
 ```bash
 # Pure-core JS unit tests (no browser needed)
-cd glass_brains/viewer && node --test
+cd glass_brains/web && node --test
 
-# Generate a tiny synthetic test volume
-python make_test_sphere.py        # writes test_sphere.nii.gz
+# Python + headless-browser tests (Playwright):
+python tests/test_pipeline_parity.py   # CPython pipeline == browser ground truth
+python tests/test_cli_arrays.py        # render uses array overlays, not GLB
+python tests/test_pyodide_sync.py      # web/pyodide/pipeline.py == glass_brains/pipeline.py
+python tests/smoketest.py              # Pyodide boots + meshes the demo in a browser
+python tests/integration_test.py       # full app: demo, upload, preset switch, remove
 ```
 
 ---
