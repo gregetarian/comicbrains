@@ -254,6 +254,8 @@ def cli():
     # style overrides (unset = use viewer defaults)
     r.add_argument('--surface', choices=['inflated', 'pial'], default=None)
     r.add_argument('--voxels', choices=['blocky', 'smooth'], default=None)
+    r.add_argument('--smooth', type=int, default=None,
+                   help='extra surface smoothing of the smooth (0.5mm-grid) mesh: Taubin iterations (0 = off)')
     r.add_argument('--gamma', type=float, default=None)
     r.add_argument('--veil', type=float, default=None)
     r.add_argument('--veil-k', type=float, default=None)
@@ -309,6 +311,7 @@ def cli():
         setp('cortexSurface', args.surface)
         setp('voxel.representation', args.voxels)
         setp('voxel.clusterMin', args.cluster_size)
+        setp('voxel.smoothing', args.smooth)
         setp('margin', args.margin)
         setp('shadows.enabled', args.shadows)
         setp('colormapMode', args.colormap_mode)

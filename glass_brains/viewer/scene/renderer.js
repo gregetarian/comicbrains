@@ -121,6 +121,61 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     }
     recolor();
 
+    // --- optional extra smoothing of the marching-cubes ('smooth' variant) meshes ---
+    // Taubin (λ/μ) low-pass on the surface built from the 0.5mm-upsampled grid. λ shrinks,
+    // μ (negative) re-inflates, so volume is preserved (unlike plain Laplacian). Each call
+    // re-smooths from the cached ORIGINAL positions, so the slider is non-cumulative. Only
+    // 'smooth' meshes are touched; blocky voxels are never smoothed. aValue/aClusterSize
+    // (threshold + cluster filtering) are per-vertex and unaffected.
+    function meshAdjacency(geo) {
+        if (geo.userData.adj) return geo.userData.adj;
+        const idx = geo.index.array, n = geo.attributes.position.count;
+        const adj = Array.from({ length: n }, () => []);
+        const seen = Array.from({ length: n }, () => new Set());
+        const link = (a, b) => { if (!seen[a].has(b)) { seen[a].add(b); adj[a].push(b); } };
+        for (let t = 0; t < idx.length; t += 3) {
+            const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+            link(a, b); link(a, c); link(b, a); link(b, c); link(c, a); link(c, b);
+        }
+        geo.userData.adj = adj;
+        geo.userData.orig = new Float32Array(geo.attributes.position.array);
+        return adj;
+    }
+    function taubinSmooth(geo, iters, lambda = 0.5, mu = -0.53) {
+        const adj = meshAdjacency(geo), pos = geo.attributes.position.array;
+        pos.set(geo.userData.orig);                          // re-smooth from the original
+        if (iters > 0) {
+            const n = pos.length / 3, tmp = new Float32Array(pos.length);
+            const step = (f) => {
+                for (let v = 0; v < n; v++) {
+                    const ns = adj[v], k = ns.length;
+                    if (!k) { tmp[3 * v] = pos[3 * v]; tmp[3 * v + 1] = pos[3 * v + 1]; tmp[3 * v + 2] = pos[3 * v + 2]; continue; }
+                    let x = 0, y = 0, z = 0;
+                    for (const u of ns) { x += pos[3 * u]; y += pos[3 * u + 1]; z += pos[3 * u + 2]; }
+                    x /= k; y /= k; z /= k;
+                    tmp[3 * v] = pos[3 * v] + f * (x - pos[3 * v]);
+                    tmp[3 * v + 1] = pos[3 * v + 1] + f * (y - pos[3 * v + 1]);
+                    tmp[3 * v + 2] = pos[3 * v + 2] + f * (z - pos[3 * v + 2]);
+                }
+                pos.set(tmp);
+            };
+            for (let i = 0; i < iters; i++) { step(lambda); step(mu); }
+        }
+        geo.attributes.position.needsUpdate = true;
+        geo.computeVertexNormals();
+    }
+    /** (Re)apply each overlay's `voxel.smoothing` iteration count to its smooth meshes.
+     *  Pass an overlay index to re-smooth just that one (cheap during a slider drag). */
+    function applySmoothing(only = null) {
+        for (const tm of sceneModel.meshes) {
+            if (tm.meta.role !== 'voxel' || tm.meta.variant !== 'smooth') continue;
+            const oi = tm.meta.overlay ?? 0;
+            if (only != null && oi !== only) continue;
+            taubinSmooth(tm.mesh.geometry, overlayStyle(config, oi).smoothing | 0);
+        }
+    }
+    applySmoothing();   // honour any smoothing requested by the config (e.g. headless --smooth)
+
     // --- panels: one ortho camera each, seeing all overlay layers ---
     const panels = config.layout.panels.map((p) => {
         const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 800);
@@ -156,6 +211,9 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     let clipTarget = makeDepthTarget(maxCellW, maxCellH);
     const clipCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 800);
     cortexOutline.outlineMaterial.uniforms.uClipDepth.value = clipTarget.texture;
+    // Voxel edges clip against the SAME combined depth, so an overlay's edges are
+    // occluded where a closer overlay's volume covers them (no longer see-through).
+    for (const ep of edgePasses) ep.outlineMaterial.uniforms.uClipDepth.value = clipTarget.texture;
 
     function renderClipDepth(camera) {
         const prev = scene.overrideMaterial;
@@ -291,15 +349,22 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             renderer.setScissorTest(true);
             renderer.render(scene, camera);
 
-            // Per-overlay voxel edges first (underneath), then black cortex outline on
-            // top — depth-clipped so any voxel genuinely in front shows its own edge.
+            // Combined nearest-overlay depth, built ONCE per panel BEFORE the edge passes,
+            // then used to occlude BOTH the per-overlay voxel edges and the cortex outline
+            // where a closer overlay volume sits in front (edges no longer draw through).
             let anyEdges = false;
+            for (let i = 0; i < N; i++) if (osR[i].edges.enabled) anyEdges = true;
+            const clip = anyEdges && N > 0;
+            if (clip) renderClipDepth(camera);
+            // Per-overlay voxel edges first (underneath), depth-clipped against the others.
             for (let i = 0; i < N; i++) {
-                if (osR[i].edges.enabled) { edgePasses[i].update(camera, rect.x, rect.y, rect.w, rect.h); anyEdges = true; }
+                if (!osR[i].edges.enabled) continue;
+                edgePasses[i].outlineMaterial.uniforms.uClipApply.value = clip ? 1.0 : 0.0;
+                edgePasses[i].update(camera, rect.x, rect.y, rect.w, rect.h);
             }
+            // Black cortex outline on top — clipped so any voxel genuinely in front shows.
             if (config.style.outline.enabled) {
-                if (anyEdges && N > 0) renderClipDepth(camera);
-                cortexOutline.outlineMaterial.uniforms.uClipApply.value = (anyEdges && N > 0) ? 1.0 : 0.0;
+                cortexOutline.outlineMaterial.uniforms.uClipApply.value = clip ? 1.0 : 0.0;
                 cortexOutline.update(camera, rect.x, rect.y, rect.w, rect.h);
             }
         }
@@ -373,7 +438,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     }
 
     return {
-        scene, renderFrame, resize, setPixelRatio, getPanelRects, zoomPanel, scaleOutlines, recolor, applyStyle, setColormap,
+        scene, renderFrame, resize, setPixelRatio, getPanelRects, zoomPanel, scaleOutlines, recolor, applyStyle, applySmoothing, setColormap,
         overlays, config, renderer, THREE, sceneModel,
         _internals: { uniforms, glassMat, anatomyMat, voxelMats, dir, amb },
     };

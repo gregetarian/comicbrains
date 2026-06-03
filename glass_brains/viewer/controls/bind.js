@@ -132,6 +132,10 @@ function buildOverlayRows({ engine, config, colormaps }) {
         bindRange(clu.range, os.clusterMin ?? 0, (v) => { set({ voxel: { clusterMin: v } }); engine.applyStyle(); }, { min: 0, max: maxClu, step: 1 }, 'Cluster-extent threshold — hide clusters < N voxels.');
         g.append(clu.wrap);
 
+        const sm = sw('smooth+');
+        bindRange(sm.range, os.smoothing ?? 0, (v) => { set({ voxel: { smoothing: v } }); engine.applySmoothing(i); }, { min: 0, max: 12, step: 1 }, 'Extra surface smoothing of the smooth (0.5mm-grid) mesh — Taubin iterations. 0 = off.');
+        g.append(sm.wrap);
+
         const pos = btn('+only');
         bindToggle(pos, !!os.positiveOnly, (on) => { set({ positiveOnly: on }); engine.applyStyle(); }, 'Show only positive values.');
         g.append(pos);

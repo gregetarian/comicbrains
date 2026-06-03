@@ -29,6 +29,7 @@ export const DEFAULTS = {
         voxel: {
             representation: 'smooth', // 'blocky' (voxelwise) | 'smooth'
             clusterMin: 105,          // cluster-extent threshold: hide clusters < N voxels
+            smoothing: 0,             // extra Taubin smoothing iterations on the 'smooth' (0.5mm-grid) mesh; 0 = off
             shininess: 200,
             specular: 0.0,   // light-independent glint amount (slider 0..0.6); off = flat matte
             emissive: 1.0,   // full flat colormap colour (scene lights are 0 by default)
@@ -80,6 +81,7 @@ export function overlayStyle(config, i = 0) {
         gamma: o.gamma ?? s.gamma,
         representation: ov.representation ?? v.representation,
         clusterMin: ov.clusterMin ?? v.clusterMin,
+        smoothing: ov.smoothing ?? v.smoothing,
         shininess: ov.shininess ?? v.shininess,
         specular: ov.specular ?? v.specular,
         emissive: ov.emissive ?? v.emissive,

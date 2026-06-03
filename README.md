@@ -32,7 +32,8 @@ drives both, so figures match the interactive view pixel-for-pixel).
   on-screen colorbar (one per overlay) runs the *same* shader pipeline so it
   matches the voxels. **Show/hide** the colorbars (the `✕` on them, or the
   **Colorbar** toggle) so a stack of bars never squashes the brains.
-- **Blocky or smooth** voxels, pial or inflated cortex.
+- **Blocky or smooth** voxels, pial or inflated cortex; an optional **extra
+  smoothing** pass (Taubin) on the smooth (0.5 mm-grid) meshes for rounder surfaces.
 - **Shared world scale** so every brain renders at the same physical size across
   a figure, plus **per-panel zoom** (hover a panel for `+ / –`).
 - **Save brain** / **Save bars** — the brains export at full resolution with no
@@ -116,7 +117,8 @@ NIfTI**. Every slider has a type-in box and a hover tooltip.
 **Per-overlay row (one per NIfTI):**
 
 - name + **✕** to remove · **colormap** · **Smooth** (blocky↔smooth) ·
-  **thr** (threshold) · **cluster k** (cluster-extent) · **+only** ·
+  **thr** (threshold) · **cluster k** (cluster-extent) · **smooth+** (extra Taubin
+  smoothing of the smooth/0.5mm-grid mesh; 0 = off) · **+only** ·
   **Edges** + **edge w** · **veil / veil log** (depth fade) ·
   **emissive / specular / shine**.
 - **Row order = display priority** — drag-free: the higher row wins where
