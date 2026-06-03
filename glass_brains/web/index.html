@@ -67,6 +67,16 @@
     .lab { font-size: 9px; color: #999; text-transform: uppercase; letter-spacing: 0.5px; }
     .sw { display: flex; flex-direction: column; align-items: center; gap: 1px; }
     .sw span { font-size: 8px; color: #999; }
+    /* clickable info: parameter labels (above each slider) + a small ⓘ on toggles/selects */
+    .sw span.has-info { cursor: help; border-bottom: 1px dotted #bbb; }
+    .info { width: 13px; height: 13px; min-width: 13px; padding: 0; margin-left: 4px; font-size: 9px;
+      line-height: 11px; border: 1px solid #bbb; border-radius: 50%; background: #fff; color: #888;
+      cursor: pointer; font-style: italic; font-family: Georgia, 'Times New Roman', serif; vertical-align: middle; }
+    .info:hover { color: #222; border-color: #888; }
+    .info-pop { position: fixed; z-index: 9998; max-width: 260px; background: #2b2b2b; color: #fff;
+      font-size: 11px; line-height: 1.45; padding: 8px 10px; border-radius: 5px;
+      box-shadow: 0 3px 10px rgba(0,0,0,0.32); display: none; }
+    .info-pop.show { display: block; }
     input[type=range] { width: 66px; }
     .numbox { width: 46px; margin-top: 2px; font-size: 10px; padding: 1px 3px; border: 1px solid #ccc; border-radius: 3px; text-align: center; }
     .numbox::-webkit-inner-spin-button, .numbox::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }

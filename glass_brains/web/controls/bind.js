@@ -14,6 +14,45 @@ import { overlayStyle, setOverlayStyle } from '../core/config-schema.js';
 const $ = (id) => document.getElementById(id);
 const trimNum = (v) => { const n = parseFloat(v); return Number.isInteger(n) ? String(n) : String(Math.round(n * 1e4) / 1e4); };
 
+// --- clickable info popovers: one shared box; click an anchor to toggle, click away to close.
+// Each parameter's label (above its slider) is clickable; toggles/selects get a small ⓘ. ---
+let _pop = null, _popFor = null;
+function _popover() {
+    if (_pop) return _pop;
+    _pop = document.createElement('div');
+    _pop.className = 'info-pop';
+    document.body.appendChild(_pop);
+    document.addEventListener('click', (e) => { if (!e.target.closest('.has-info, .info')) hideInfo(); }, true);
+    window.addEventListener('resize', hideInfo);
+    return _pop;
+}
+function hideInfo() { if (_pop) _pop.classList.remove('show'); _popFor = null; }
+function showInfo(anchor, text) {
+    const pop = _popover();
+    if (_popFor === anchor) { hideInfo(); return; }            // click again to dismiss
+    pop.textContent = text; pop.classList.add('show'); _popFor = anchor;
+    const r = anchor.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - pop.offsetWidth - 8)) + 'px';
+    // prefer above (controls live in the bottom bar); fall back to below if no room
+    pop.style.top = (r.top - pop.offsetHeight - 6 >= 0 ? r.top - pop.offsetHeight - 6 : r.bottom + 6) + 'px';
+}
+/** Make a slider's label (the span above it, in .sw) a clickable info trigger. */
+function infoLabel(rangeEl, tip) {
+    if (!rangeEl || !tip) return;
+    const label = rangeEl.closest('.sw')?.querySelector('span');
+    if (!label) return;
+    label.classList.add('has-info'); label.title = tip;
+    label.addEventListener('click', (e) => { e.stopPropagation(); showInfo(label, tip); });
+}
+/** A small ⓘ button after a toggle/select that pops its info. */
+function infoIcon(afterEl, tip) {
+    if (!afterEl || !tip) return;
+    const b = document.createElement('button');
+    b.className = 'info'; b.type = 'button'; b.textContent = 'i'; b.title = tip; b.setAttribute('aria-label', 'info');
+    b.addEventListener('click', (e) => { e.stopPropagation(); showInfo(b, tip); });
+    afterEl.insertAdjacentElement('afterend', b);
+}
+
 const TIPS = {
     'c-inflate': 'Inflated cortical surface vs the folded pial surface.',
     'c-outline': 'Toggle the black cortical-surface outline.',
@@ -41,10 +80,13 @@ function bindRange(el, value, oninput, { min, max, step } = {}, tip) {
     el.insertAdjacentElement('afterend', box);
     el.addEventListener('input', () => { box.value = trimNum(el.value); oninput(parseFloat(el.value)); });
     box.addEventListener('input', () => { const v = parseFloat(box.value); if (!isFinite(v)) return; el.value = v; oninput(parseFloat(el.value)); });
+    infoLabel(el, tip);                              // clickable ⓘ on the label above the slider
 }
 function bindToggle(el, active, onchange, tip) {
     if (!el) return;
-    if (tip) el.title = tip;
+    // defer the ⓘ so it's inserted after the button is appended to the DOM (per-overlay
+    // toggles are bound before append; globals are already in the DOM — both work).
+    if (tip) { el.title = tip; queueMicrotask(() => infoIcon(el, tip)); }
     el.classList.toggle('active', !!active);
     el.addEventListener('click', () => { el.classList.toggle('active'); onchange(el.classList.contains('active')); });
 }
@@ -109,6 +151,7 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
         cmap.title = 'Colormap for this overlay.';
         cmap.addEventListener('change', () => { set({ colormap: cmap.value }); engine.recolor(); });
         g.append(cmap);
+        infoIcon(cmap, 'Colormap for this overlay (each overlay can use a different one; sequential vs diverging auto-picked from the data).');
 
         const smooth = btn('Smooth');
         bindToggle(smooth, os.representation === 'smooth', (on) => set({ voxel: { representation: on ? 'smooth' : 'blocky' } }), 'Smooth (marching-cubes) vs blocky voxels.');
@@ -123,7 +166,7 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
         g.append(clu.wrap);
 
         const sm = sw('smooth+');
-        bindRange(sm.range, os.smoothing ?? 0, (v) => { set({ voxel: { smoothing: v } }); engine.applySmoothing(i); }, { min: 0, max: 12, step: 1 }, 'Extra surface smoothing of the smooth (0.5mm-grid) mesh — Taubin iterations. 0 = off.');
+        bindRange(sm.range, os.smoothing ?? 0, (v) => { set({ voxel: { smoothing: v } }); engine.applySmoothing(i); }, { min: 0, max: 20, step: 1 }, 'Extra surface smoothing of the smooth (0.5mm-grid) mesh — rounds rough cluster surfaces (size-preserving). 0 = off. Most visible on irregular real data.');
         g.append(sm.wrap);
 
         const pos = btn('+only');

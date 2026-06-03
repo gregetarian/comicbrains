@@ -122,13 +122,13 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     recolor();
 
     // --- optional extra smoothing of the marching-cubes ('smooth' variant) meshes ---
-    // Taubin (λ/μ) low-pass on the surface built from the 0.5mm-upsampled grid. λ shrinks,
-    // μ (negative) re-inflates, so volume is preserved (unlike plain Laplacian). Each call
-    // re-smooths from the cached ORIGINAL positions, so the slider is non-cumulative. Only
-    // 'smooth' meshes are touched; blocky voxels are never smoothed. aValue/aClusterSize
-    // (threshold + cluster filtering) are per-vertex and unaffected.
-    function meshAdjacency(geo) {
-        if (geo.userData.adj) return geo.userData.adj;
+    // `iters` Laplacian passes that VISIBLY round the surface, then each connected blob is
+    // rescaled about its own centroid back to its original mean radius — so it smooths
+    // without shrinking or drifting (the trick the cortex inflation uses). Re-smooths from
+    // cached originals each call (non-cumulative). Only 'smooth' meshes; blocky voxels are
+    // never touched. aValue/aClusterSize (threshold + cluster) are per-vertex and unaffected.
+    function meshTopo(geo) {
+        if (geo.userData.gbTopo) return geo.userData.gbTopo;
         const idx = geo.index.array, n = geo.attributes.position.count;
         const adj = Array.from({ length: n }, () => []);
         const seen = Array.from({ length: n }, () => new Set());
@@ -137,29 +137,57 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             const a = idx[t], b = idx[t + 1], c = idx[t + 2];
             link(a, b); link(a, c); link(b, a); link(b, c); link(c, a); link(c, b);
         }
-        geo.userData.adj = adj;
-        geo.userData.orig = new Float32Array(geo.attributes.position.array);
-        return adj;
+        const orig = new Float32Array(geo.attributes.position.array);
+        // connected components (disjoint blobs) + each one's original centroid + mean radius
+        const comp = new Int32Array(n).fill(-1), comps = [];
+        for (let s = 0; s < n; s++) {
+            if (comp[s] !== -1) continue;
+            const members = [], stack = [s]; comp[s] = comps.length;
+            while (stack.length) { const v = stack.pop(); members.push(v); for (const w of adj[v]) if (comp[w] === -1) { comp[w] = comps.length; stack.push(w); } }
+            comps.push(members);
+        }
+        const c0 = [], r0 = [];
+        for (const m of comps) {
+            let cx = 0, cy = 0, cz = 0;
+            for (const v of m) { cx += orig[3 * v]; cy += orig[3 * v + 1]; cz += orig[3 * v + 2]; }
+            cx /= m.length; cy /= m.length; cz /= m.length;
+            let r = 0; for (const v of m) r += Math.hypot(orig[3 * v] - cx, orig[3 * v + 1] - cy, orig[3 * v + 2] - cz);
+            c0.push([cx, cy, cz]); r0.push(r / m.length);
+        }
+        return (geo.userData.gbTopo = { adj, orig, comps, c0, r0 });
     }
-    function taubinSmooth(geo, iters, lambda = 0.5, mu = -0.53) {
-        const adj = meshAdjacency(geo), pos = geo.attributes.position.array;
-        pos.set(geo.userData.orig);                          // re-smooth from the original
+    function smoothMesh(geo, iters, lambda = 0.55) {
+        const T = meshTopo(geo), pos = geo.attributes.position.array;
+        pos.set(T.orig);                                     // always re-smooth from the original
         if (iters > 0) {
-            const n = pos.length / 3, tmp = new Float32Array(pos.length);
-            const step = (f) => {
+            const n = pos.length / 3, adj = T.adj, tmp = new Float32Array(pos.length);
+            for (let it = 0; it < iters; it++) {
                 for (let v = 0; v < n; v++) {
                     const ns = adj[v], k = ns.length;
                     if (!k) { tmp[3 * v] = pos[3 * v]; tmp[3 * v + 1] = pos[3 * v + 1]; tmp[3 * v + 2] = pos[3 * v + 2]; continue; }
                     let x = 0, y = 0, z = 0;
-                    for (const u of ns) { x += pos[3 * u]; y += pos[3 * u + 1]; z += pos[3 * u + 2]; }
-                    x /= k; y /= k; z /= k;
-                    tmp[3 * v] = pos[3 * v] + f * (x - pos[3 * v]);
-                    tmp[3 * v + 1] = pos[3 * v + 1] + f * (y - pos[3 * v + 1]);
-                    tmp[3 * v + 2] = pos[3 * v + 2] + f * (z - pos[3 * v + 2]);
+                    for (const w of ns) { x += pos[3 * w]; y += pos[3 * w + 1]; z += pos[3 * w + 2]; }
+                    tmp[3 * v] = pos[3 * v] + lambda * (x / k - pos[3 * v]);
+                    tmp[3 * v + 1] = pos[3 * v + 1] + lambda * (y / k - pos[3 * v + 1]);
+                    tmp[3 * v + 2] = pos[3 * v + 2] + lambda * (z / k - pos[3 * v + 2]);
                 }
                 pos.set(tmp);
-            };
-            for (let i = 0; i < iters; i++) { step(lambda); step(mu); }
+            }
+            // restore each blob's original size about its centroid (undo the shrink)
+            for (let ci = 0; ci < T.comps.length; ci++) {
+                const m = T.comps[ci];
+                let cx = 0, cy = 0, cz = 0;
+                for (const v of m) { cx += pos[3 * v]; cy += pos[3 * v + 1]; cz += pos[3 * v + 2]; }
+                cx /= m.length; cy /= m.length; cz /= m.length;
+                let r1 = 0; for (const v of m) r1 += Math.hypot(pos[3 * v] - cx, pos[3 * v + 1] - cy, pos[3 * v + 2] - cz);
+                r1 /= m.length;
+                const s = r1 > 1e-6 ? T.r0[ci] / r1 : 1, o = T.c0[ci];
+                for (const v of m) {
+                    pos[3 * v] = (pos[3 * v] - cx) * s + o[0];
+                    pos[3 * v + 1] = (pos[3 * v + 1] - cy) * s + o[1];
+                    pos[3 * v + 2] = (pos[3 * v + 2] - cz) * s + o[2];
+                }
+            }
         }
         geo.attributes.position.needsUpdate = true;
         geo.computeVertexNormals();
@@ -171,7 +199,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             if (tm.meta.role !== 'voxel' || tm.meta.variant !== 'smooth') continue;
             const oi = tm.meta.overlay ?? 0;
             if (only != null && oi !== only) continue;
-            taubinSmooth(tm.mesh.geometry, overlayStyle(config, oi).smoothing | 0);
+            smoothMesh(tm.mesh.geometry, overlayStyle(config, oi).smoothing | 0);
         }
     }
     applySmoothing();   // honour any smoothing requested by the config (e.g. headless --smooth)
