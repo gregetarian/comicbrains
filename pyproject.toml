@@ -14,17 +14,19 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Visualization",
 ]
+# Runtime deps = the per-upload pipeline only (glass_brains/pipeline.py; also runs in
+# Pyodide). trimesh/mne/cmap are needed ONLY to re-bake the fsaverage template assets
+# (glass-brains bake) → the [bake] extra.
 dependencies = [
     "nibabel>=5.0",
     "numpy>=1.24",
     "scipy>=1.10",
     "scikit-image>=0.20",
-    "trimesh>=4.0",
-    "mne>=1.5",
-    "cmap>=0.1",
 ]
 
 [project.optional-dependencies]
+# Re-bake the template assets into web/data/ (one-time / maintainer).
+bake = ["trimesh>=4.0", "mne>=1.5", "cmap>=0.1"]
 # Headless PNG rendering (`glass-brains render`). After install, run:
 #   python -m playwright install chromium
 render = ["playwright>=1.40"]
@@ -44,6 +46,12 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["glass_brains*"]
 
-# Ship the web viewer (JS/HTML/JSON) alongside the Python package.
+# Ship the single web viewer (engine + baked assets) alongside the Python package, so
+# `glass-brains render`/`open` serve the SAME files GitHub Pages deploys. The .py under
+# web/pyodide/ ship as data (the browser fetches them into Pyodide), not as modules.
 [tool.setuptools.package-data]
-glass_brains = ["viewer/**/*.js", "viewer/**/*.html", "viewer/**/*.json", "viewer/**/*.png"]
+glass_brains = [
+    "web/**/*.js", "web/**/*.html", "web/**/*.json", "web/**/*.png", "web/**/*.css",
+    "web/**/*.glb", "web/**/*.bin", "web/**/*.gz", "web/**/*.whl",
+    "web/**/*.py", "web/**/*.nii.gz",
+]

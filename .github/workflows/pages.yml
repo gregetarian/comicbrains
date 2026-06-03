@@ -1,0 +1,37 @@
+# Deploy the in-browser viewer (glass_brains/web) to GitHub Pages.
+#
+# The site is static: HTML/JS + the baked fsaverage assets in web/data/. Pyodide and
+# its packages load from the jsDelivr CDN at runtime, so nothing heavy is built here.
+# Single-threaded Pyodide needs no COOP/COEP headers, so default Pages hosting works.
+# Repo Settings → Pages → Source: GitHub Actions.
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["glass_brains/web/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: glass_brains/web
+      - id: deployment
+        uses: actions/deploy-pages@v4

@@ -1,18 +1,13 @@
-"""GlassBrain — public API for building and viewing glass brain visualisations."""
+"""GlassBrain — loads the fsaverage template (cortex + subcortical + aseg) for the
+one-time asset bake (see glass_brains/bake.py). Per-upload meshing lives in
+glass_brains/pipeline.py; the interactive viewer is served by `open_viewer`."""
 
-import shutil
-import json
 import numpy as np
 from pathlib import Path
 
 from .surfaces import load_template_surfaces
 from .subcortical import extract_all_subcortical, LABEL_COLORS
-from .overlays import (load_stat_map, classify_overlay_voxels,
-                       build_structure_overlays, prepare_volume_texture,
-                       cluster_sizes)
-from .export import export_mesh, export_mesh_with_scalars, export_volume, write_scene_json
 
-VIEWER_DIR = Path(__file__).parent / 'viewer'
 WEB_DIR = Path(__file__).parent / 'web'   # the single static viewer (served by `open`)
 
 
@@ -60,7 +55,6 @@ class GlassBrain:
         if include_subcortical:
             self.subcortical, self.subcortical_colors = extract_all_subcortical(template)
             self._load_aseg(template)
-        self.overlays = []
 
     def _load_aseg(self, template):
         import mne
@@ -72,168 +66,6 @@ class GlassBrain:
                 self._aseg_data = np.asarray(img.dataobj)
                 self._aseg_affine = img.affine
                 return
-
-    def add_overlay(self, nifti_path, threshold=2.3, cmap='coolwarm',
-                    name=None, method='isosurface'):
-        nifti_path = Path(nifti_path)
-        if name is None:
-            name = nifti_path.stem.replace('.nii', '')
-
-        data, affine = load_stat_map(nifti_path, threshold)
-        # Per-voxel cluster size (at this threshold) → baked as a vertex attribute
-        # for the live cluster-extent filter.
-        cluster_data = cluster_sizes(data)
-
-        # Classify voxels by brain structure using aseg
-        structure_overlays = {}
-        max_abs = 1.0
-        diverging = False
-
-        if self._aseg_data is not None:
-            category_masks = classify_overlay_voxels(
-                data, affine, self._aseg_data, self._aseg_affine
-            )
-            print(f"Overlay '{name}': {len(category_masks)} structure categories")
-            structure_overlays, max_abs, diverging = build_structure_overlays(
-                data, affine, category_masks, cmap_name=cmap, cluster_data=cluster_data
-            )
-
-        volume_info = None
-        if method in ('volume', 'both'):
-            volume_info = prepare_volume_texture(data, affine)
-
-        self.overlays.append({
-            'name': name,
-            'threshold': threshold,
-            'cmap': cmap,
-            'max_abs_value': max_abs,
-            'diverging': diverging,
-            'max_cluster': int(cluster_data.max()) if cluster_data.size else 0,
-            'structure_overlays': structure_overlays,
-            'volume_info': volume_info,
-        })
-
-    def export(self, out_dir='./glass_brain_viewer'):
-        out_dir = Path(out_dir)
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-        # Copy viewer files
-        if VIEWER_DIR.exists():
-            for item in VIEWER_DIR.iterdir():
-                dest = out_dir / item.name
-                if item.is_dir():
-                    if dest.exists():
-                        shutil.rmtree(dest)
-                    shutil.copytree(item, dest)
-                else:
-                    shutil.copy2(item, dest)
-
-        # Export cortex meshes (pial + a slightly-inflated Taubin-smoothed variant)
-        from .surfaces import inflate_surfaces
-        inflated = inflate_surfaces(self.surfaces)
-        cortex_paths = {}
-        for hemi, mesh in self.surfaces.items():
-            rel_path = f'cortex_{hemi}.glb'
-            export_mesh_with_scalars(mesh, out_dir / rel_path, scalar_name='curvature')
-            infl_rel = f'cortex_{hemi}_inflated.glb'
-            export_mesh_with_scalars(inflated[hemi], out_dir / infl_rel, scalar_name='curvature')
-            cortex_paths[hemi] = {'mesh': rel_path, 'meshInflated': infl_rel}
-
-        # Export subcortical meshes
-        subcort_paths = {}
-        for name, mesh in self.subcortical.items():
-            safe_name = name.lower().replace('-', '_').replace(' ', '_')
-            rel_path = f'subcortical/{safe_name}.glb'
-            color = self.subcortical_colors.get(name, (0.6, 0.6, 0.6))
-            n = len(mesh.vertices)
-            vc = (np.array([*color, 1.0]) * 255).astype(np.uint8)
-            vertex_colors = np.tile(vc, (n, 1))
-            export_mesh(mesh, out_dir / rel_path, vertex_colors=vertex_colors)
-            subcort_paths[name] = rel_path
-
-        # Export overlays — per-structure voxel meshes
-        overlay_entries = []
-        for ov in self.overlays:
-            entry = {
-                'name': ov['name'],
-                'colormap': ov['cmap'],
-                'threshold': ov['threshold'],
-                'maxAbsValue': ov['max_abs_value'],
-                'maxClusterSize': ov.get('max_cluster', 0),
-                'diverging': bool(ov['diverging']),
-                'role': 'overlay',
-                'structureOverlays': {},
-            }
-
-            overlay_dir = out_dir / 'overlay'
-            overlay_dir.mkdir(parents=True, exist_ok=True)
-
-            for cat, so in ov['structure_overlays'].items():
-                mesh_rel = f"overlay/{ov['name']}_{cat}.glb"
-                vals_rel = f"overlay/{ov['name']}_{cat}_values.json"
-                clu_rel = f"overlay/{ov['name']}_{cat}_clusters.json"
-
-                export_mesh(so['mesh'], out_dir / mesh_rel)
-                with open(out_dir / vals_rel, 'w') as f:
-                    json.dump(so['values'], f)
-                with open(out_dir / clu_rel, 'w') as f:
-                    json.dump(so['clusters'], f)
-
-                cat_entry = {'mesh': mesh_rel, 'values': vals_rel, 'clusters': clu_rel}
-
-                if 'mesh_smooth' in so:
-                    smesh_rel = f"overlay/{ov['name']}_{cat}_smooth.glb"
-                    svals_rel = f"overlay/{ov['name']}_{cat}_smooth_values.json"
-                    sclu_rel = f"overlay/{ov['name']}_{cat}_smooth_clusters.json"
-                    export_mesh(so['mesh_smooth'], out_dir / smesh_rel)
-                    with open(out_dir / svals_rel, 'w') as f:
-                        json.dump(so['values_smooth'], f)
-                    with open(out_dir / sclu_rel, 'w') as f:
-                        json.dump(so['clusters_smooth'], f)
-                    cat_entry['meshSmooth'] = smesh_rel
-                    cat_entry['valuesSmooth'] = svals_rel
-                    cat_entry['clustersSmooth'] = sclu_rel
-
-                entry['structureOverlays'][cat] = cat_entry
-
-            if ov['volume_info'] is not None:
-                bin_rel = f"volumes/{ov['name']}.bin"
-                json_rel = f"volumes/{ov['name']}.json"
-                export_volume(ov['volume_info'], out_dir / bin_rel, out_dir / json_rel)
-                entry['volume'] = bin_rel
-                entry['volume_meta'] = json_rel
-
-            overlay_entries.append(entry)
-
-        write_scene_json(
-            out_dir,
-            cortex_meshes=cortex_paths,
-            subcortical_meshes=subcort_paths,
-            subcortical_colors=self.subcortical_colors,
-            overlays=overlay_entries if overlay_entries else None,
-        )
-
-        # Colormap LUTs for the viewer (JS holds no hardcoded colormaps).
-        from .colormaps import export_colormaps
-        export_colormaps(out_dir / 'colormaps.json', names=self._colormap_names)
-
-        # Render config: preset + style. colormap='auto' lets the viewer pick a
-        # sequential vs diverging map from the data (fixes coolwarm-on-positive).
-        ov = self.overlays[0] if self.overlays else None
-        render_config = {
-            'preset': self.layout,
-            'style': {
-                'colormap': self._display_cmap,
-                'threshold': ov['threshold'] if ov else None,
-            },
-        }
-        if self._cluster_min:
-            render_config['style']['voxel'] = {'clusterMin': self._cluster_min}
-        with open(out_dir / 'render-config.json', 'w') as f:
-            json.dump(render_config, f, indent=2)
-
-        print(f"Exported to {out_dir.resolve()}")
-        return out_dir
 
     def _repr_html_(self):
         return "<p><b>GlassBrain</b>: bakes the fsaverage template. Run <code>glass-brains open</code> to view.</p>"
@@ -249,6 +81,8 @@ def cli():
     op.add_argument('nifti', nargs='*', help='(accepted for convenience but not loaded server-side; '
                                              'drag NIfTIs into the browser — processing is in-browser now)')
     op.add_argument('--port', type=int, default=8421)
+
+    sub.add_parser('bake', help='Re-bake the fsaverage template assets into web/data/ (needs the [bake] extra)')
 
     r = sub.add_parser('render', help='Render a custom multi-panel figure to PNG (headless)')
     r.add_argument('nifti', help='NIfTI stat map')
@@ -305,6 +139,10 @@ def cli():
             print("Note: NIfTIs are uploaded in the browser now (processed locally via Pyodide). "
                   "Drag them in once the page opens.")
         open_viewer(port=args.port)
+
+    elif args.command == 'bake':
+        from . import bake
+        bake.bake()
 
     elif args.command == 'render':
         from .render import build_layout, render_to_png
