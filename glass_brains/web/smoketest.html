@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"><title>comicbrains pyodide smoke test</title></head>
+<body>
+<pre id="log">starting…</pre>
+<script type="module">
+import { processNifti } from './pyodide/bootstrap.js';
+
+const logEl = document.getElementById('log');
+const log = (m) => { logEl.textContent += '\n' + m; console.log(m); };
+
+const asF32 = (u8) => new Float32Array(u8.slice().buffer);
+const asU32 = (u8) => new Uint32Array(u8.slice().buffer);
+const arrMax = (a) => { let m = -Infinity; for (const x of a) if (x > m) m = x; return m; };
+const arrMin = (a) => { let m = Infinity; for (const x of a) if (x < m) m = x; return m; };
+
+(async () => {
+    try {
+        const blob = await fetch('test_sphere.nii.gz').then((r) => r.blob());
+        const file = new File([blob], 'test_sphere.nii.gz');
+        const { meta, buffers } = await processNifti(file, 2.3, log);
+
+        const summary = {
+            name: meta.name, maxAbsValue: meta.maxAbsValue,
+            maxClusterSize: meta.maxClusterSize, diverging: meta.diverging,
+            nBuffers: buffers.length, structures: {},
+        };
+        for (const [cat, v] of Object.entries(meta.structures)) {
+            const b = v.blocky, s = v.smooth;
+            const pos = asF32(buffers[b.pos]), idx = asU32(buffers[b.idx]), val = asF32(buffers[b.val]);
+            summary.structures[cat] = {
+                blockyVerts: b.nverts, blockyTris: b.ntris, smoothVerts: s ? s.nverts : 0,
+                posLen: pos.length, idxLen: idx.length, idxMax: idx.length ? arrMax(idx) : -1,
+                valMin: +arrMin(val).toFixed(2), valMax: +arrMax(val).toFixed(2),
+            };
+        }
+        log('DONE');
+        window.__RESULT__ = summary;
+    } catch (e) {
+        log('ERROR: ' + (e && e.message));
+        window.__ERROR__ = (e && e.stack) || String(e);
+    }
+})();
+</script>
+</body>
+</html>

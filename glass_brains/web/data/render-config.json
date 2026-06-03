@@ -1,0 +1,9 @@
+{
+  "preset": "ninePanel",
+  "style": {
+    "colormap": "YlGnBu",
+    "voxel": {
+      "clusterMin": 0
+    }
+  }
+}

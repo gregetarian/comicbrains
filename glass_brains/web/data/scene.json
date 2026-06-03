@@ -1,0 +1,171 @@
+{
+  "version": "2.0",
+  "space": "MNI152",
+  "cortex": {
+    "lh": {
+      "role": "glass",
+      "mesh": "cortex_lh.glb",
+      "meshInflated": "cortex_lh_inflated.glb"
+    },
+    "rh": {
+      "role": "glass",
+      "mesh": "cortex_rh.glb",
+      "meshInflated": "cortex_rh_inflated.glb"
+    }
+  },
+  "subcortical": {
+    "L-Thalamus": {
+      "mesh": "subcortical/l_thalamus.glb",
+      "role": "interior",
+      "color": [
+        0.55,
+        0.75,
+        0.55
+      ]
+    },
+    "L-Caudate": {
+      "mesh": "subcortical/l_caudate.glb",
+      "role": "interior",
+      "color": [
+        0.48,
+        0.58,
+        0.82
+      ]
+    },
+    "L-Putamen": {
+      "mesh": "subcortical/l_putamen.glb",
+      "role": "interior",
+      "color": [
+        0.82,
+        0.55,
+        0.55
+      ]
+    },
+    "L-Pallidum": {
+      "mesh": "subcortical/l_pallidum.glb",
+      "role": "interior",
+      "color": [
+        0.75,
+        0.75,
+        0.5
+      ]
+    },
+    "L-Hippocampus": {
+      "mesh": "subcortical/l_hippocampus.glb",
+      "role": "interior",
+      "color": [
+        0.85,
+        0.65,
+        0.45
+      ]
+    },
+    "L-Amygdala": {
+      "mesh": "subcortical/l_amygdala.glb",
+      "role": "interior",
+      "color": [
+        0.72,
+        0.52,
+        0.72
+      ]
+    },
+    "L-Accumbens": {
+      "mesh": "subcortical/l_accumbens.glb",
+      "role": "interior",
+      "color": [
+        0.6,
+        0.8,
+        0.8
+      ]
+    },
+    "R-Thalamus": {
+      "mesh": "subcortical/r_thalamus.glb",
+      "role": "interior",
+      "color": [
+        0.55,
+        0.75,
+        0.55
+      ]
+    },
+    "R-Caudate": {
+      "mesh": "subcortical/r_caudate.glb",
+      "role": "interior",
+      "color": [
+        0.48,
+        0.58,
+        0.82
+      ]
+    },
+    "R-Putamen": {
+      "mesh": "subcortical/r_putamen.glb",
+      "role": "interior",
+      "color": [
+        0.82,
+        0.55,
+        0.55
+      ]
+    },
+    "R-Pallidum": {
+      "mesh": "subcortical/r_pallidum.glb",
+      "role": "interior",
+      "color": [
+        0.75,
+        0.75,
+        0.5
+      ]
+    },
+    "R-Hippocampus": {
+      "mesh": "subcortical/r_hippocampus.glb",
+      "role": "interior",
+      "color": [
+        0.85,
+        0.65,
+        0.45
+      ]
+    },
+    "R-Amygdala": {
+      "mesh": "subcortical/r_amygdala.glb",
+      "role": "interior",
+      "color": [
+        0.72,
+        0.52,
+        0.72
+      ]
+    },
+    "R-Accumbens": {
+      "mesh": "subcortical/r_accumbens.glb",
+      "role": "interior",
+      "color": [
+        0.6,
+        0.8,
+        0.8
+      ]
+    },
+    "Brainstem": {
+      "mesh": "subcortical/brainstem.glb",
+      "role": "interior",
+      "color": [
+        0.65,
+        0.65,
+        0.65
+      ]
+    },
+    "L-Cerebellum": {
+      "mesh": "subcortical/l_cerebellum.glb",
+      "role": "interior",
+      "color": [
+        0.8,
+        0.7,
+        0.55
+      ]
+    },
+    "R-Cerebellum": {
+      "mesh": "subcortical/r_cerebellum.glb",
+      "role": "interior",
+      "color": [
+        0.8,
+        0.7,
+        0.55
+      ]
+    }
+  }
+}
