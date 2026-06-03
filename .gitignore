@@ -27,3 +27,10 @@ glass_brain_viewer/
 
 # Stray non-project assets
 booms/
+
+# The standalone browser repo is being merged into glass_brains/web/ — keep it on disk
+# as a copy-source during the migration, but never commit it into this repo.
+/comicbrains-in-browser/
+
+# Test screenshot output
+tests/shots/
