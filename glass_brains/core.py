@@ -11,9 +11,35 @@ from .overlays import (load_stat_map, classify_overlay_voxels,
                        build_structure_overlays, prepare_volume_texture,
                        cluster_sizes)
 from .export import export_mesh, export_mesh_with_scalars, export_volume, write_scene_json
-from .server import serve_and_open
 
 VIEWER_DIR = Path(__file__).parent / 'viewer'
+WEB_DIR = Path(__file__).parent / 'web'   # the single static viewer (served by `open`)
+
+
+def open_viewer(port=8421):
+    """Serve the static viewer locally and open it in the browser. Uploads are processed
+    in-browser via Pyodide — identical to the GitHub Pages site; no Python backend."""
+    import http.server
+    import functools
+    import threading
+    import webbrowser
+    handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(WEB_DIR))
+    for p in range(port, port + 100):
+        try:
+            httpd = http.server.ThreadingHTTPServer(("", p), handler)
+            break
+        except OSError:
+            continue
+    else:
+        raise RuntimeError(f"No available port found near {port}")
+    url = f"http://localhost:{p}/"
+    print(f"Serving glass brain viewer at {url}")
+    print("Drop a NIfTI in the browser to render it (processed locally via Pyodide). Press Ctrl+C to stop.")
+    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+    try:
+        httpd.serve_forever()
+    except KeyboardInterrupt:
+        print("\nStopped.")
 
 
 class GlassBrain:
@@ -209,14 +235,8 @@ class GlassBrain:
         print(f"Exported to {out_dir.resolve()}")
         return out_dir
 
-    def show(self, port=8421):
-        import tempfile
-        out_dir = Path(tempfile.mkdtemp(prefix='glass_brain_'))
-        self.export(out_dir)
-        serve_and_open(out_dir, port, glass_brain=self)
-
     def _repr_html_(self):
-        return "<p><b>GlassBrain</b>: call <code>.show()</code> to open in browser.</p>"
+        return "<p><b>GlassBrain</b>: bakes the fsaverage template. Run <code>glass-brains open</code> to view.</p>"
 
 
 def cli():
@@ -224,15 +244,11 @@ def cli():
     parser = argparse.ArgumentParser(description='Glass Brains 2.0 viewer')
     sub = parser.add_subparsers(dest='command')
 
-    show_parser = sub.add_parser('show', help='Open the interactive glass brain viewer')
-    show_parser.add_argument('nifti', nargs='*', help='one or more NIfTI stat maps (one overlay row each; first = top)')
-    show_parser.add_argument('--threshold', type=float, default=2.3)
-    show_parser.add_argument('-k', '--cluster-size', type=int, default=105,
-                             help='initial cluster-extent threshold in voxels (adjustable live)')
-    show_parser.add_argument('--cmap', default='YlGnBu')
-    show_parser.add_argument('--layout', default='ninePanel', help='fourPanel | ninePanel | overview')
-    show_parser.add_argument('--port', type=int, default=8421)
-    show_parser.add_argument('--no-subcortical', action='store_true')
+    op = sub.add_parser('open', aliases=['show'],
+                        help='Serve the interactive viewer locally; upload NIfTIs in the browser (Pyodide, no backend)')
+    op.add_argument('nifti', nargs='*', help='(accepted for convenience but not loaded server-side; '
+                                             'drag NIfTIs into the browser — processing is in-browser now)')
+    op.add_argument('--port', type=int, default=8421)
 
     r = sub.add_parser('render', help='Render a custom multi-panel figure to PNG (headless)')
     r.add_argument('nifti', help='NIfTI stat map')
@@ -284,14 +300,11 @@ def cli():
 
     args = parser.parse_args()
 
-    if args.command == 'show':
-        gb = GlassBrain(include_subcortical=not args.no_subcortical,
-                        layout=args.layout, display_cmap=args.cmap,
-                        cluster_min=args.cluster_size)
-        for nif in (args.nifti or []):
-            gb.add_overlay(nif, threshold=args.threshold,
-                           cmap=(args.cmap if args.cmap != 'auto' else 'viridis'))
-        gb.show(port=args.port)
+    if args.command in ('open', 'show'):
+        if args.nifti:
+            print("Note: NIfTIs are uploaded in the browser now (processed locally via Pyodide). "
+                  "Drag them in once the page opens.")
+        open_viewer(port=args.port)
 
     elif args.command == 'render':
         from .render import build_layout, render_to_png
