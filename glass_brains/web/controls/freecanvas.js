@@ -21,8 +21,8 @@ const el = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) 
 
 const ROT_STEP = 15;     // degrees per button press
 const ORBIT_SENS = 0.45; // degrees per pixel of body drag
-const MIN_FRAC = 0.06;   // smallest panel (fraction of canvas)
-const SNAP_PX = 16;      // snap-to-grid step (CSS px) when snapping is on
+const MIN_FRAC = 0.06;     // smallest panel (fraction of canvas)
+const SNAP_DEFAULT_PX = 8; // default snap step (CSS px) — fine; user-adjustable
 
 // Delayed, styled hover tooltip for editor controls — native `title` is slow and
 // inconsistent. `text` may be a string or a function (for controls whose label changes).
@@ -100,14 +100,18 @@ const newPanelId = () => `fc${++_uid}`;
 export function createFreeCanvasEditor({ container, canvas, config, getEngine, onStructureChange, onBgAlpha }) {
     let frames = [];
     let snap = true;                                 // snap move/resize to a fine px grid
+    let snapPx = SNAP_DEFAULT_PX;                     // snap step (CSS px); user-adjustable
     const gridOverlay = el('div', 'fc-gridlines');   // faint grid shown while snapping
+    const clone = (o) => JSON.parse(JSON.stringify(o));
+    let home = clone(config.layout);                 // baseline arrangement, for "Reset"
     const toolbar = buildToolbar();
 
     function layout() { return config.layout; }
     function panels() { return config.layout.panels; }
     function maxZ() { return panels().reduce((m, p) => Math.max(m, (p.place && p.place.z) || 0), 0); }
-    // Snap a fraction to the nearest SNAP_PX step of the live canvas (no-op when off).
-    const snapF = (frac, dim) => (snap ? Math.round(frac * dim / SNAP_PX) * SNAP_PX / dim : frac);
+    const snapshotHome = () => { home = clone(config.layout); };
+    // Snap a fraction to the nearest grid step of the live canvas (no-op when off).
+    const snapF = (frac, dim) => (snap ? Math.round(frac * dim / snapPx) * snapPx / dim : frac);
     const updateGrid = () => { gridOverlay.style.display = (layout().mode === 'free' && snap) ? 'block' : 'none'; };
 
     // --- toolbar: grid seeder + add panel ---
@@ -120,12 +124,17 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         seed.addEventListener('click', () => seedGrid(clamp(+rows.value | 0, 1, 6), clamp(+cols.value | 0, 1, 6)));
         const add = el('button', 'btn', '+ panel'); attachTip(add, 'Add a panel at the centre of the canvas');
         add.addEventListener('click', addPanel);
-        bar.append(rows, el('span', null, '×'), cols, seed, add);
+        const reset = el('button', 'btn', 'Reset'); attachTip(reset, 'Reset panels to their original positions (undo moves, resizes, rotations & slices)');
+        reset.addEventListener('click', resetLayout);
+        bar.append(rows, el('span', null, '×'), cols, seed, add, reset);
         // Snap to grid — snaps move/resize to a fine grid (with a faint grid overlay).
         const snapLab = el('label', 'fc-chk'); const snapCb = el('input'); snapCb.type = 'checkbox'; snapCb.checked = snap;
         snapCb.addEventListener('change', () => { snap = snapCb.checked; updateGrid(); });
         snapLab.append(snapCb, el('span', null, ' snap')); attachTip(snapLab, 'Snap moving & resizing to a fine grid');
-        bar.append(snapLab);
+        const gpx = el('input', 'fc-grid'); gpx.type = 'number'; gpx.min = 2; gpx.max = 40; gpx.value = snapPx;
+        gpx.addEventListener('change', () => { snapPx = clamp(+gpx.value | 0, 2, 40) || SNAP_DEFAULT_PX; gpx.value = snapPx; reposition(); });
+        attachTip(gpx, 'Grid size in px (smaller = finer snapping)');
+        bar.append(snapLab, gpx);
         // Transparent background (whole canvas) — exports a transparent PNG.
         if (onBgAlpha) {
             const lab = el('label', 'fc-chk');
@@ -148,6 +157,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
             list.push(p);
         }
         config.layout = { ...layout(), mode: 'free', panels: list };
+        snapshotHome();              // a freshly seeded grid is the new "original" to reset to
         onStructureChange();
     }
     function addPanel() {
@@ -162,6 +172,22 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         onStructureChange();
     }
     function bringToFront(panel) { (panel.place ||= { x: 0.3, y: 0.3, w: 0.4, h: 0.4 }).z = maxZ() + 1; }
+    // Restore each panel that existed in the baseline to its original place/rotate/slice/
+    // view (matched by id); panels added since are left as-is. Undoes manual edits.
+    function resetLayout() {
+        const byId = new Map((home.panels || []).map((p) => [p.id, p]));
+        for (const p of panels()) {
+            const h = byId.get(p.id); if (!h) continue;
+            p.place = h.place ? { ...h.place } : p.place;
+            p.rotate = h.rotate ? { ...h.rotate } : undefined;
+            p.slice = h.slice ? clone(h.slice) : null;
+            p.camera = clone(h.camera); p.content = clone(h.content);
+            p.framing = h.framing ? { ...h.framing } : p.framing;
+            p.view = h.view; p.title = h.title;
+            p.anatomyOpacity = h.anatomyOpacity != null ? h.anatomyOpacity : null;
+        }
+        onStructureChange();   // rebuild so the frame controls (view picker, slice state) refresh
+    }
 
     // --- per-panel frame ---
     function makeFrame(panel, idx) {
@@ -329,7 +355,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         // grid overlay tracks the canvas area (behind the frames)
         gridOverlay.style.left = '0px'; gridOverlay.style.top = '0px';
         gridOverlay.style.width = canvas.clientWidth + 'px'; gridOverlay.style.height = canvas.clientHeight + 'px';
-        gridOverlay.style.backgroundSize = SNAP_PX + 'px ' + SNAP_PX + 'px';
+        gridOverlay.style.backgroundSize = snapPx + 'px ' + snapPx + 'px';
         const rects = getEngine().getPanelRects();
         frames.forEach((fr, i) => {
             const r = rects[i]; if (!r) return;

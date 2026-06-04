@@ -139,9 +139,19 @@ def main():
         assert '"slice"' in cli_text, "slice not serialized into figure.json"
         print("[8] Copy CLI -> --spec figure.json (free layout + slice embedded) ✓")
 
-        # capture the LIVE edited config (moved/resized/rotated/added panel + anterior view)
+        # capture the LIVE edited config (moved/resized/rotated/added panel + slice) for the
+        # round-trip render BEFORE resetting.
         live_layout = page.evaluate("JSON.parse(JSON.stringify(window.__engine().config.layout))")
         live_style = page.evaluate("JSON.parse(JSON.stringify(window.__engine().config.style))")
+
+        # 9) Reset → the moved/sliced panel returns to its original place, slice cleared
+        ox = pj("x")
+        page.locator(".fc-toolbar button", has_text="Reset").click()
+        page.wait_for_timeout(300)
+        rx = pj("x")
+        assert abs(rx - 0.75) < 0.02, f"reset did not restore place.x to ~0.75 (moved {ox} -> {rx})"
+        assert ev(f"window.__engine().config.layout.panels[{j}].slice") is None, "reset did not clear the slice"
+        print(f"[9] reset: place.x {round(ox,3)} -> {round(rx,3)} (~original), slice cleared ✓")
         browser.close()
     httpd.shutdown()
 
@@ -158,9 +168,9 @@ def main():
     render_to_png(str(ROOT / "test_sphere.nii.gz"), str(out), layout=live_layout, style=live_style,
                   width=int(cv.get("w", 900)), height=int(cv.get("h", 500)), scale=1, colorbar=False)
     assert out.exists() and out.stat().st_size > 1000, "round-trip render produced no PNG"
-    print(f"[9] live-config round-trip render (with slice) -> {out.name} ({out.stat().st_size} bytes) ✓")
+    print(f"[10] live-config round-trip render (with slice) -> {out.name} ({out.stat().st_size} bytes) ✓")
 
-    print("\nPASS — Free Canvas: switch, move, resize, rotate, re-view, slice, add panel, Copy-CLI --spec, and headless round-trip all work. No console errors.")
+    print("\nPASS — Free Canvas: switch, move, resize, rotate, re-view, slice, add panel, reset, Copy-CLI --spec, and headless round-trip all work. No console errors.")
 
 
 if __name__ == "__main__":
