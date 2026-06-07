@@ -145,7 +145,7 @@ export function normalizeConfig(raw = {}) {
         anatomyOpacity: null,
         framing: { margin: 1.06, fit: 'auto' },
         ...p,
-        content: { roles: ['cortex', 'voxel'], hemisphere: 'both', categories: null, representation: null, ...(p.content || {}) },
+        content: { roles: ['cortex', 'voxel'], hemisphere: 'both', categories: null, representation: null, anatomyStyle: 'glass', ...(p.content || {}) },
         framing: { margin: 1.06, fit: 'auto', ...(p.framing || {}) },
     }));
     const { ok, errors } = validateConfig(cfg);

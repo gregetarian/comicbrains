@@ -9,6 +9,10 @@
  */
 const cortex = (hemi) => ({ roles: ['cortex', 'voxel'], hemisphere: hemi });
 const subcort = (hemi, cats) => ({ roles: ['anatomy', 'voxel'], hemisphere: hemi, categories: cats });
+// Cortex + subcortical together, with the subcortex rendered OPAQUE (occludes the
+// cortex lines + other overlays behind it; its own voxels still show). categories
+// stays null so cortex AND all subcortical of that hemisphere show.
+const cortexSubcortOpaque = (hemi) => ({ roles: ['cortex', 'anatomy', 'voxel'], hemisphere: hemi, categories: null, anatomyStyle: 'opaque' });
 
 export const VIEWS = {
     left_lateral:  { plane: 'left_lateral',  title: 'L Lateral', content: cortex('lh') },
@@ -21,12 +25,16 @@ export const VIEWS = {
     ventral:       { plane: 'ventral',       title: 'Ventral',   content: cortex('both') },
     subcortical_l: { plane: 'left_lateral',  title: 'Subcort L', content: subcort('lh', ['subcort_l', 'cereb_l', 'brainstem']), anatomyOpacity: 0.55 },
     subcortical_r: { plane: 'right_lateral', title: 'Subcort R', content: subcort('rh', ['subcort_r', 'cereb_r', 'brainstem']), anatomyOpacity: 0.55 },
+    cortex_subcort_l: { plane: 'left_lateral',  title: 'L + Subcort (opaque)', content: cortexSubcortOpaque('lh') },
+    cortex_subcort_r: { plane: 'right_lateral', title: 'R + Subcort (opaque)', content: cortexSubcortOpaque('rh') },
+    cortex_subcort:   { plane: 'dorsal',        title: 'Cortex + Subcort (opaque)', content: cortexSubcortOpaque('both') },
 };
 
 /** Order shown in the view picker. */
 export const VIEW_ORDER = [
     'left_lateral', 'right_lateral', 'left_medial', 'right_medial',
     'anterior', 'posterior', 'dorsal', 'ventral', 'subcortical_l', 'subcortical_r',
+    'cortex_subcort_l', 'cortex_subcort_r', 'cortex_subcort',
 ];
 
 /** Apply a named view onto a panel object (mutates camera/content/title/anatomyOpacity). */

@@ -110,6 +110,46 @@ export function makeAnatomyMaterial(anatomy = {}) {
     });
 }
 
+// ---- Anatomy: OPAQUE shell (per-panel option) ----------------------------
+// A solid cel-shaded subcortical shell that WRITES depth and is NOT in the
+// transparent pass, so it occludes whatever is behind it (the background, the
+// cortex outline, other overlays' voxels). Its own stat voxels still show: voxels
+// draw later (renderOrder 15) and the small positive polygonOffset pushes this
+// shell slightly away from the camera so surface/near-interior voxels win the depth
+// test. Shares the slice uniforms so a per-panel cut applies to it too.
+const anatomyOpaqueFrag = `
+uniform vec3 uColor;
+uniform float uCelBands;
+uniform vec3 uLightDir;
+varying vec3 vNormal;
+varying vec3 vViewDir;
+${SLICE_FRAG_PARS}
+void main() {
+    if (gbSliceDiscard(vWorldPos)) discard;
+    vec3 n = gl_FrontFacing ? normalize(vNormal) : -normalize(vNormal);
+    float intensity = 0.5 * dot(n, normalize(uLightDir)) + 0.5;
+    intensity = floor(intensity * uCelBands + 0.001) / uCelBands;
+    gl_FragColor = vec4(uColor * mix(0.45, 1.0, intensity), 1.0);   // opaque
+}`;
+
+export function makeOpaqueAnatomyMaterial(anatomy = {}) {
+    return new THREE.ShaderMaterial({
+        vertexShader: glassVert,
+        fragmentShader: anatomyOpaqueFrag,
+        transparent: false,
+        depthWrite: true,
+        depthTest: true,
+        side: THREE.FrontSide,
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 4,
+        uniforms: {
+            uColor: { value: new THREE.Color(anatomy.opaqueColor ?? 0xd7dbe2) },
+            uCelBands: { value: anatomy.celBands ?? 3.0 },
+            uLightDir: { value: new THREE.Vector3(0, 0, 1) },   // view-space headlight
+            ...sliceUniforms(),
+        },
+    });
+}
+
 // ---- Voxel (shiny, opaque, threshold + depth veil) -----------------------
 export function makeSharedVoxelUniforms(style = {}) {
     const v = style.voxel || {};

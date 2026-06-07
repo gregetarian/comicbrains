@@ -12,6 +12,7 @@ import { layoutGrid, freeRect } from './grid.js';
 import { visible } from './visibility.js';
 import { valueToT, resolveColormap, loadColormaps, sampleLUT } from './colormap.js';
 import { normalizeConfig, validateConfig } from './config-schema.js';
+import { applyView, VIEWS } from './views.js';
 import { resolveConfig } from './presets.js';
 import { isFreeFigure, buildSpec, buildRenderText } from '../controls/cli-export.js';
 
@@ -170,6 +171,16 @@ test('defaults add grid mode + opaque canvas (so existing configs are unchanged)
     const cfg = resolveConfig('fourPanel');
     assert.equal(cfg.layout.mode, 'grid');
     assert.equal(cfg.layout.canvas.bgAlpha, 1);
+});
+
+test('panels default to glass subcortical; the opaque view sets anatomyStyle=opaque + cortex+anatomy', () => {
+    const cfg = normalizeConfig({ layout: { panels: [{ id: 'a', camera: { plane: 'dorsal' }, cell: { row: 0, col: 0 } }] } });
+    assert.equal(cfg.layout.panels[0].content.anatomyStyle, 'glass');   // default unchanged
+    const p = applyView({}, 'cortex_subcort_l');
+    assert.equal(p.content.anatomyStyle, 'opaque');
+    assert.ok(p.content.roles.includes('cortex') && p.content.roles.includes('anatomy') && p.content.roles.includes('voxel'));
+    assert.equal(p.content.categories, null);   // categories null so cortex isn't filtered out
+    assert.equal(VIEWS.cortex_subcort_l.plane, 'left_lateral');
 });
 
 test('normalizeConfig accepts a place-based panel (free mode) and preserves rotate/slice', () => {

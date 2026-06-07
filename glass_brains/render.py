@@ -24,6 +24,11 @@ def _subcort(hemi, cats):
     return {"roles": ["anatomy", "voxel"], "hemisphere": hemi, "categories": cats}
 
 
+def _cortex_subcort_opaque(hemi):
+    # cortex + subcortical together; subcortex OPAQUE (occludes content behind it).
+    return {"roles": ["cortex", "anatomy", "voxel"], "hemisphere": hemi, "anatomyStyle": "opaque"}
+
+
 VIEWS = {
     "left_lateral":  ("left_lateral",  _cortex("lh"),   "L Lateral"),
     "right_lateral": ("right_lateral", _cortex("rh"),   "R Lateral"),
@@ -35,6 +40,9 @@ VIEWS = {
     "ventral":       ("ventral",       _cortex("both"), "Ventral"),
     "subcortical_l": ("left_lateral",  _subcort("lh", ["subcort_l", "cereb_l", "brainstem"]), "Subcort L"),
     "subcortical_r": ("right_lateral", _subcort("rh", ["subcort_r", "cereb_r", "brainstem"]), "Subcort R"),
+    "cortex_subcort_l": ("left_lateral",  _cortex_subcort_opaque("lh"),   "L + Subcort (opaque)"),
+    "cortex_subcort_r": ("right_lateral", _cortex_subcort_opaque("rh"),   "R + Subcort (opaque)"),
+    "cortex_subcort":   ("dorsal",        _cortex_subcort_opaque("both"), "Cortex + Subcort (opaque)"),
 }
 
 ALIASES = {

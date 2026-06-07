@@ -14,7 +14,7 @@ import { cameraBasis } from '../core/cameras.js';
 import { visible } from '../core/visibility.js';
 import { resolveColormap, colorizeValues } from '../core/colormap.js';
 import { overlayStyle } from '../core/config-schema.js';
-import { makeGlassMaterial, makeAnatomyMaterial, makeVoxelMaterial, makeSharedVoxelUniforms } from './materials.js';
+import { makeGlassMaterial, makeAnatomyMaterial, makeOpaqueAnatomyMaterial, makeVoxelMaterial, makeSharedVoxelUniforms } from './materials.js';
 import { OutlinePass, makeThresholdDepthMaterial } from './passes.js';
 
 export function createEngine({ renderer, width, height, sceneModel, colormaps, config }) {
@@ -52,6 +52,9 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     // --- global surface/anatomy materials ---
     const glassMat = makeGlassMaterial(config.style.glass);
     const anatomyMat = makeAnatomyMaterial(config.style.anatomy);
+    // Opaque subcortical shell, selected per-panel when content.anatomyStyle === 'opaque'.
+    const anatomyOpaqueMat = makeOpaqueAnatomyMaterial(config.style.anatomy);
+    const anatomyMeshes = sceneModel.meshes.filter((tm) => tm.meta.role === 'anatomy').map((tm) => tm.mesh);
 
     // --- per-overlay voxel materials + uniforms (overlay i → layer 1+i) ---
     const uniforms = [], voxelMats = [];
@@ -334,6 +337,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     function applyPanelSlice(slice) {
         writeSlice(glassMat.uniforms, slice);
         writeSlice(anatomyMat.uniforms, slice);
+        writeSlice(anatomyOpaqueMat.uniforms, slice);
         for (let i = 0; i < N; i++) writeSlice(uniforms[i], slice);   // voxel + its edge depth material
         writeSlice(cortexOutline.depthMaterial.uniforms, slice);      // cortex silhouette
     }
@@ -411,6 +415,11 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             applyPanelSlice(def.slice);     // per-panel cut (resets to OFF when absent)
             if (def.anatomyOpacity != null) { anatomyMat.opacity = def.anatomyOpacity; anatomyMat.transparent = def.anatomyOpacity < 1; }
             else { anatomyMat.opacity = config.style.anatomy.opacity; anatomyMat.transparent = anatomyMat.opacity < 1; }
+            // Per-panel subcortical style: opaque shell (occludes cortex lines + overlays
+            // behind it; its own voxels still show) vs the default glass. Reset EVERY panel
+            // (anatomy meshes are shared) so an opaque panel doesn't bleed into the next.
+            const opaqueAnat = def.content && def.content.anatomyStyle === 'opaque';
+            for (const m of anatomyMeshes) m.material = opaqueAnat ? anatomyOpaqueMat : anatomyMat;
 
             // Per-overlay depth-veil range anchored to that overlay's nearest voxel.
             const fwd = normalize(sub(fr.lookAt, fr.position));
@@ -545,7 +554,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     // Mesh geometries are NOT disposed — they're owned by the app and reused across
     // rebuilds; only this engine's materials, outline passes, and targets are freed.
     function dispose() {
-        glassMat.dispose(); anatomyMat.dispose();
+        glassMat.dispose(); anatomyMat.dispose(); anatomyOpaqueMat.dispose();
         for (const m of voxelMats) m.dispose();
         cortexOutline.dispose();
         for (const ep of edgePasses) ep.dispose();
