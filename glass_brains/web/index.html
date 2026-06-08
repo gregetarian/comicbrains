@@ -150,9 +150,11 @@
     .zoomcluster { display: inline-flex; gap: 2px; align-items: center; }
     /* colormap picker (swatch previews) */
     .cmap-picker { display: inline-flex; align-items: center; gap: 2px; }
-    .cmap-trigger { display: inline-flex; align-items: center; gap: 5px; max-width: 150px; }
-    .cmap-swatch { width: 64px; height: 12px; border: 1px solid #ccc; border-radius: 2px; display: block; flex: none; }
-    .cmap-name { font-size: 11px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* fixed width so a long colormap name never shifts the rest of the overlay row */
+    .cmap-trigger { display: inline-flex; align-items: center; width: 112px; justify-content: flex-start; }
+    .cmap-name { font-size: 11px; color: #555; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; }
+    /* gradient swatches live ONLY in the popup */
+    .cmap-popup .cmap-swatch { width: 64px; height: 12px; border: 1px solid #ccc; border-radius: 2px; display: block; flex: none; }
     .cmap-mirror { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
     .cmap-popup { position: fixed; z-index: 50; width: 210px; max-height: 340px; overflow-y: auto;
       background: #fff; border: 1px solid #bbb; border-radius: 5px; box-shadow: 0 6px 20px rgba(0,0,0,0.2);

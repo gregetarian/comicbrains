@@ -1,10 +1,11 @@
 /**
  * cmap-picker.js — a per-overlay colormap picker with PREVIEWS.
  *
- * A trigger button shows the current map's name + a gradient swatch; clicking opens a
- * scrollable popup listing every colormap (grouped by category) each with its own swatch;
- * ‹ › steppers cycle with a live swatch. Swatches are drawn from the loaded colormaps Map
- * via sampleLUT (sRGB), so no new assets/deps. A hidden <select class="cmap-mirror">
+ * A fixed-width trigger button shows the current map's NAME (so a long name never shifts
+ * the rest of the row); clicking opens a scrollable popup listing every colormap (grouped
+ * by category) each with a gradient SWATCH preview. ‹ › steppers cycle. Swatches are drawn
+ * from the loaded colormaps Map via sampleLUT (sRGB), so no new assets/deps. The previews
+ * live ONLY in the popup. A hidden <select class="cmap-mirror">
  * stays synced to the value (screen-reader fallback + a stable automation/test hook).
  *
  * Replaces the bare native <select>; the apply path (onChange → set+recolor) is unchanged.
@@ -55,9 +56,10 @@ export function createCmapPicker({ colormaps, value, onChange }) {
     const prev = document.createElement('button'); prev.type = 'button'; prev.className = 'btn cmap-nav'; prev.textContent = '‹'; prev.title = 'Previous colormap';
     const trigger = document.createElement('button'); trigger.type = 'button'; trigger.className = 'btn cmap-trigger';
     trigger.setAttribute('aria-haspopup', 'listbox'); trigger.setAttribute('aria-expanded', 'false');
-    const tSwatch = document.createElement('canvas'); tSwatch.className = 'cmap-swatch';
+    // Trigger shows the NAME only, in a fixed-width box (so a long map name never shifts the
+    // rest of the row). The gradient swatches live in the popup.
     const tName = document.createElement('span'); tName.className = 'cmap-name';
-    trigger.append(tSwatch, tName);
+    trigger.append(tName);
     const next = document.createElement('button'); next.type = 'button'; next.className = 'btn cmap-nav'; next.textContent = '›'; next.title = 'Next colormap';
     // hidden mirror <select>: keeps value reflected for a11y + automation (the .overlay-row select hook).
     const mirror = document.createElement('select'); mirror.className = 'cmap-mirror'; mirror.tabIndex = -1; mirror.setAttribute('aria-hidden', 'true');
@@ -65,8 +67,6 @@ export function createCmapPicker({ colormaps, value, onChange }) {
     wrap.append(prev, trigger, next, mirror);
 
     function refresh() {
-        const cm = colormaps.get(cur);
-        drawSwatch(tSwatch, cm, cur);
         tName.textContent = cur;
         if (names.includes(cur)) mirror.value = cur;
         trigger.dataset.cmap = cur;
