@@ -111,12 +111,12 @@ export function makeAnatomyMaterial(anatomy = {}) {
 }
 
 // ---- Anatomy: OPAQUE shell (per-panel option) ----------------------------
-// A solid cel-shaded subcortical shell that WRITES depth and is NOT in the
-// transparent pass, so it occludes whatever is behind it (the background, the
-// cortex outline, other overlays' voxels). Its own stat voxels still show: voxels
-// draw later (renderOrder 15) and the small positive polygonOffset pushes this
-// shell slightly away from the camera so surface/near-interior voxels win the depth
-// test. Shares the slice uniforms so a per-panel cut applies to it too.
+// Still WHITE and "translucent to itself" (you see the overlay's own voxels inside the
+// structure), but it OBSCURES whatever is behind it (the background, cortex lines, other
+// overlays' voxels). Trick: render the BACK faces only as an opaque white wall that writes
+// depth. The front is open, so you look INTO the structure (its interior voxels — which are
+// nearer than the back wall — still draw); the white back wall fills the structure and its
+// depth occludes everything behind it. Shares the slice uniforms (per-panel cut applies).
 const anatomyOpaqueFrag = `
 uniform vec3 uColor;
 uniform float uCelBands;
@@ -129,7 +129,7 @@ void main() {
     vec3 n = gl_FrontFacing ? normalize(vNormal) : -normalize(vNormal);
     float intensity = 0.5 * dot(n, normalize(uLightDir)) + 0.5;
     intensity = floor(intensity * uCelBands + 0.001) / uCelBands;
-    gl_FragColor = vec4(uColor * mix(0.45, 1.0, intensity), 1.0);   // opaque
+    gl_FragColor = vec4(uColor * mix(0.82, 1.0, intensity), 1.0);   // opaque WHITE, gentle shading
 }`;
 
 export function makeOpaqueAnatomyMaterial(anatomy = {}) {
@@ -139,10 +139,11 @@ export function makeOpaqueAnatomyMaterial(anatomy = {}) {
         transparent: false,
         depthWrite: true,
         depthTest: true,
-        side: THREE.FrontSide,
-        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 4,
+        side: THREE.BackSide,   // back wall only → open front, interior voxels still show
+        // push the wall slightly back so voxels at the structure surface win the depth test.
+        polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2,
         uniforms: {
-            uColor: { value: new THREE.Color(anatomy.opaqueColor ?? 0xd7dbe2) },
+            uColor: { value: new THREE.Color(anatomy.opaqueColor ?? 0xffffff) },
             uCelBands: { value: anatomy.celBands ?? 3.0 },
             uLightDir: { value: new THREE.Vector3(0, 0, 1) },   // view-space headlight
             ...sliceUniforms(),
