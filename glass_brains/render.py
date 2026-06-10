@@ -365,3 +365,36 @@ def render_batch(jobs, **session_kwargs):
             out = j.pop("out_png", None) or j.pop("out")
             outs.append(s.render(j.pop("nifti"), out, **j))
     return outs
+
+
+def render_orbit(nifti, out, *, layout, frames=24, degrees=360.0, fps=12, gif=False, template_dir=None, **render_kwargs):
+    """Turntable animation (M10): render `frames` views spinning the brain through `degrees` total
+    (yaw added to every panel's rotation), reusing ONE browser. Writes <stem>_000.png, _001.png, ...
+    and, with gif=True (needs imageio), assembles them into <out>. Returns the frame paths (or the
+    GIF path). The most compelling way to show a stylized 3D volume — what being volumetric earns."""
+    import copy
+    out = Path(out)
+    stem, ext = out.with_suffix(""), (out.suffix if out.suffix not in ("", ".gif") else ".png")
+    frame_paths = []
+    with RenderSession(template_dir=template_dir) as s:
+        for i in range(frames):
+            yaw = degrees * i / max(frames, 1)
+            lay = copy.deepcopy(layout)
+            for p in lay.get("panels", []):
+                r = dict(p.get("rotate") or {})
+                r["yaw"] = (r.get("yaw") or 0) + yaw
+                p["rotate"] = r
+            fp = f"{stem}_{i:03d}{ext}"
+            s.render(nifti, fp, layout=lay, colorbar=False, **render_kwargs)
+            frame_paths.append(fp)
+    if gif:
+        try:
+            import imageio.v2 as imageio
+            imageio.mimsave(str(out), [imageio.imread(fp) for fp in frame_paths],
+                            duration=1.0 / max(fps, 1), loop=0)
+            print(f"Wrote {out} ({frames} frames @ {fps}fps)")
+            return out
+        except Exception as e:
+            print(f"(GIF assembly skipped: {e}); wrote {len(frame_paths)} frame PNGs")
+    print(f"Wrote {len(frame_paths)} orbit frames -> {stem}_NNN{ext}")
+    return frame_paths

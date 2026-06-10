@@ -194,6 +194,12 @@ def cli():
     r.add_argument('--crop', choices=['none', 'content'], default='none',
                    help="'content' crops the PNG to the tight bounding box of the visible brains "
                         "(matches the browser's Save PNG / Copy CLI). Default 'none' = full figure.")
+    r.add_argument('--orbit', type=float, default=None,
+                   help='turntable animation: spin the brain this many DEGREES total across --frames '
+                        '(writes <out>_NNN.png; with --gif assembles a GIF at <out>)')
+    r.add_argument('--frames', type=int, default=24, help='number of orbit frames (with --orbit)')
+    r.add_argument('--fps', type=int, default=12, help='GIF frames per second (with --orbit --gif)')
+    r.add_argument('--gif', action='store_true', help='assemble the orbit frames into a GIF (needs imageio)')
 
     args = parser.parse_args()
 
@@ -318,13 +324,18 @@ def cli():
         if bg_alpha is None:
             bg_alpha = (layout.get('canvas') or {}).get('bgAlpha', 1.0)
 
-        render_to_png(args.nifti, args.out, layout=layout, style=style,
-                      threshold=thresholds, cmap=cmap, names=names, template_dir=args.template,
-                      width=width, height=height, scale=args.scale,
+        common = dict(layout=layout, style=style, threshold=thresholds, cmap=cmap, names=names,
+                      template_dir=args.template, width=width, height=height, scale=args.scale,
                       include_subcortical=not args.no_subcortical, classify=not args.no_template,
-                      background_alpha=bg_alpha, crop=args.crop,
-                      colorbar=args.colorbar, colorbar_font=args.colorbar_font,
-                      colorbar_fontsize=args.colorbar_fontsize)
+                      background_alpha=bg_alpha, crop=args.crop)
+        if args.orbit is not None:                  # turntable animation (M10)
+            from .render import render_orbit
+            render_orbit(args.nifti, args.out, frames=args.frames, degrees=args.orbit,
+                         fps=args.fps, gif=args.gif, **common)
+        else:
+            render_to_png(args.nifti, args.out, colorbar=args.colorbar,
+                          colorbar_font=args.colorbar_font, colorbar_fontsize=args.colorbar_fontsize,
+                          **common)
 
     else:
         parser.print_help()
