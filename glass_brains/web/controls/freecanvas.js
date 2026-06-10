@@ -109,6 +109,12 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         for (const fr of frames) fr.el.classList.toggle('fc-active', fr.panel.id === id);
         reposition();
     }
+    // Click bare canvas (between/outside the panel frames) to DESELECT the active panel — frames
+    // are divs over the canvas, so an empty-space press lands on `canvas` itself. Without this the
+    // last-pressed panel stays active forever (you couldn't click "off" a box).
+    const onCanvasDown = (e) => { if (e.target === canvas && activeId !== null) setActive(null); };
+    canvas.addEventListener('pointerdown', onCanvasDown);
+
     let snap = true;                                 // snap move/resize to a fine px grid
     let snapPx = SNAP_DEFAULT_PX;                     // snap step (CSS px); user-adjustable
     const gridOverlay = el('div', 'fc-gridlines');   // faint grid shown while snapping
@@ -398,6 +404,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         });
     }
     function destroy() {
+        canvas.removeEventListener('pointerdown', onCanvasDown);
         frames.forEach((fr) => fr.el.remove());
         frames = [];
         toolbar.remove();
