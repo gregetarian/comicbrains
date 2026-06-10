@@ -125,6 +125,22 @@ async function main() {
         const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.nii(\.gz)?$|\.gz$/i.test(f.name));
         if (files.length) handleUpload(files);
     });
+    // Global Surface toggle: flip ALL loaded overlays to surface projection (and back to smooth).
+    // Per-overlay re-mesh is lazy (setOverlaySurface); turning off is a pure style switch.
+    const surfBtn = document.getElementById('c-surface-all');
+    surfBtn?.addEventListener('click', async () => {
+        if (!overlays.length) { setLoading('Load a map first.'); setTimeout(() => setLoading(null), 1500); return; }
+        const turnOn = !surfBtn.classList.contains('active');
+        surfBtn.classList.toggle('active', turnOn);
+        surfBtn.disabled = true;
+        try {
+            if (turnOn) { for (let i = 0; i < overlays.length; i++) await setOverlaySurface(i); }
+            else {
+                for (let i = 0; i < overlays.length; i++) setOverlayStyle(config, i, { voxel: { representation: 'smooth' } });
+                rebuild();
+            }
+        } finally { surfBtn.disabled = false; }
+    });
     // Minimise/restore the bottom control panel (frees the collapsed height for the brains).
     document.getElementById('c-min').addEventListener('click', () => { document.body.classList.toggle('ctrl-min'); fit(); });
     // Whole-canvas zoom controls (the brains are a fixed size; these reframe the canvas).
