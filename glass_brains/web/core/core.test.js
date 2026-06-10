@@ -154,15 +154,13 @@ test('resolveColormap auto-picks sequential for positive data and guards divergi
     assert.deepEqual(sampleLUT(maps.get('coolwarm'), 0.5), [0.5, 0, 0.5]);
 });
 
-// --- M8: surface-projection visibility (the sheet replaces the glass cortex) ---
-test('visibility: surface mode shows the surface variant + hides the glass cortex', () => {
+// --- M8: surface-projection visibility (cel-shaded patches OVER the kept glass cortex) ---
+test('visibility: surface mode shows the surface variant, glass cortex stays', () => {
     const panel = { roles: ['cortex', 'voxel'], hemisphere: 'lh' };
-    const style = { voxel: { representation: 'surface' } };
-    assert.equal(visible(panel, { role: 'cortex', hemisphere: 'lh', variant: 'pial' }, style), false);
+    const style = { voxel: { representation: 'surface' }, cortexSurface: 'pial' };
+    assert.equal(visible(panel, { role: 'cortex', hemisphere: 'lh', variant: 'pial' }, style), true);   // glass cortex KEPT (signature look)
     assert.equal(visible(panel, { role: 'voxel', hemisphere: 'lh', variant: 'surface', category: 'lh_cortex' }, style), true);
     assert.equal(visible(panel, { role: 'voxel', hemisphere: 'lh', variant: 'blocky', category: 'lh_cortex' }, style), false);
-    // in normal (smooth) mode the glass cortex still shows
-    assert.equal(visible(panel, { role: 'cortex', hemisphere: 'lh', variant: 'pial' }, { voxel: { representation: 'smooth' }, cortexSurface: 'pial' }), true);
 });
 
 // --- config + presets ---

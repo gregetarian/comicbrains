@@ -18,11 +18,6 @@ export function visible(panelContent, meshMeta, style = {}) {
     // role gate
     if (c.roles && !c.roles.includes(meshMeta.role)) return false;
 
-    // surface-projection mode (M8): the opaque sampled cortex sheet (role 'voxel', variant
-    // 'surface') stands in for the glass cortex, so hide the glass cortex where it's active.
-    const rep = c.representation || (style.voxel && style.voxel.representation);
-    if (meshMeta.role === 'cortex' && rep === 'surface') return false;
-
     // category gate (e.g. a subcortical panel limited to subcort_l/cereb_l/brainstem)
     if (c.categories && meshMeta.category && !c.categories.includes(meshMeta.category)) {
         return false;

@@ -232,12 +232,13 @@ export function makeVoxelMaterial(style = {}, shared) {
 }
 
 /**
- * Surface-projection material (M8): an OPAQUE cortical sheet. Above-threshold vertices keep their
- * LUT colour (vertexColors, set by recolor — same as voxels); below-threshold vertices fall back to
- * curvature grey (gyri light, sulci dark) so the un-activated cortex reads as a matte 3D brain, the
- * standard PySurfer/nilearn surface look. No cluster-extent discard (a sheet has no clusters); a
- * gentle depth veil + the light-independent glint give it depth with the scene lights at zero.
- * Reuses the shared voxel uniforms (uThreshold/uMaxAbs/veil/glint) so a clim/threshold change tracks.
+ * Surface-projection material (M8): the supra-threshold map painted on the cortical RIBBON, in the
+ * SAME cel-shaded comic style as the voxels — NOT a flat anatomical surface. Sub-threshold vertices
+ * are discarded, so the translucent glass cortex + black silhouette show through (the signature
+ * glass-brain look is preserved); the activated patches carry the flat emissive LUT colour + depth
+ * veil + light-independent glint, exactly like the voxel blobs. No cluster-extent discard (a sheet
+ * has no clusters). A small polygon offset lifts the patches just outside the glass shell so they
+ * read on top of it without z-fighting.
  */
 export function makeSurfaceMaterial(style = {}, shared) {
     const mat = new THREE.MeshPhongMaterial({
@@ -245,32 +246,30 @@ export function makeSurfaceMaterial(style = {}, shared) {
         specular: new THREE.Color(0, 0, 0), shininess: 1,
     });
     mat.transparent = false; mat.depthWrite = true; mat.depthTest = true;
+    mat.polygonOffset = true; mat.polygonOffsetFactor = -1; mat.polygonOffsetUnits = -4;  // sit over the glass cortex
     mat.onBeforeCompile = (shader) => {
         Object.assign(shader.uniforms, shared);
         shader.vertexShader = shader.vertexShader
             .replace('#include <common>',
-                `#include <common>\n attribute float aValue;\n attribute float aCurv;\n varying float vThreshValue;\n varying float vCurv;\n varying float vViewZ;\n ${SLICE_VERT_PARS}`)
+                `#include <common>\n attribute float aValue;\n varying float vThreshValue;\n varying float vViewZ;\n ${SLICE_VERT_PARS}`)
             .replace('#include <begin_vertex>',
-                `#include <begin_vertex>\n vThreshValue = aValue;\n vCurv = aCurv;`)
+                `#include <begin_vertex>\n vThreshValue = aValue;`)
             .replace('#include <project_vertex>',
                 `#include <project_vertex>\n vViewZ = -mvPosition.z;\n ${SLICE_VERT_ASSIGN}`);
         shader.fragmentShader =
             `uniform float uThreshold, uMaxAbs, uPositiveOnly, uNearZ, uFarZ, uVeilStrength, uVeilK, uEmissiveBoost, uGlintAmt, uGlintPow;
              uniform vec3 uVeilColor;
-             varying float vThreshValue; varying float vCurv; varying float vViewZ;
+             varying float vThreshValue; varying float vViewZ;
              ${SLICE_FRAG_PARS}\n` + shader.fragmentShader;
         shader.fragmentShader = shader.fragmentShader.replace('#include <color_fragment>',
             `#include <color_fragment>
              if (gbSliceDiscard(vWorldPos)) discard;
-             bool aboveThr = abs(vThreshValue) >= uThreshold && !(uPositiveOnly > 0.5 && vThreshValue < 0.0);
-             if (!aboveThr) {
-                 float g = mix(0.74, 0.42, smoothstep(-0.25, 0.25, vCurv));  // gyri light, sulci dark
-                 diffuseColor.rgb = vec3(g);
-             }
+             if (abs(vThreshValue) < uThreshold) discard;            // sub-threshold cortex -> glass shows through
+             if (uPositiveOnly > 0.5 && vThreshValue < 0.0) discard;
              float zf = clamp((vViewZ - uNearZ) / max(uFarZ - uNearZ, 1e-3), 0.0, 1.0);
              float veil = log(1.0 + uVeilK * zf) / log(1.0 + uVeilK);
-             diffuseColor.rgb = mix(diffuseColor.rgb, uVeilColor, veil * uVeilStrength * 0.5);
-             totalEmissiveRadiance += diffuseColor.rgb * max(uEmissiveBoost, 0.85);`);
+             diffuseColor.rgb = mix(diffuseColor.rgb, uVeilColor, veil * uVeilStrength);
+             totalEmissiveRadiance += diffuseColor.rgb * uEmissiveBoost;`);
         shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>',
             `{
                 vec3 Hg = normalize(vec3(-0.3, 0.4, 1.0) + vec3(0.0, 0.0, 1.0));
