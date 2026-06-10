@@ -145,6 +145,9 @@ def cli():
     r.add_argument('--height', type=int, default=None, help='output height px (default 1000, or the --spec canvas height)')
     r.add_argument('--scale', type=float, default=2, help='pixel ratio / supersampling (DPI)')
     r.add_argument('--no-subcortical', action='store_true')
+    r.add_argument('--no-template', action='store_true',
+                   help='no-template / volume-only: mesh the volume in its own space with no '
+                        'anatomical shell or classification (for non-MNI / edge-case maps)')
     # style overrides (unset = use viewer defaults)
     r.add_argument('--surface', choices=['inflated', 'pial'], default=None)
     r.add_argument('--voxels', default=None, help='blocky|smooth|surface; scalar or per-overlay comma list')
@@ -195,7 +198,7 @@ def cli():
         bake.bake()
 
     elif args.command == 'render':
-        from .render import build_layout, render_to_png, load_spec, _deep_merge
+        from .render import build_layout, render_to_png, load_spec, _deep_merge, to_volume_layout
         from .figure import build_style
 
         n = len(args.nifti)
@@ -283,6 +286,8 @@ def cli():
             cmap = args.cmap if ',' not in str(args.cmap) else 'auto'
             width = args.width if args.width is not None else 1600
             height = args.height if args.height is not None else 1000
+            if args.no_template:
+                layout = to_volume_layout(layout)   # volume-only: voxel role, no hemisphere split
 
         # Transparent background: explicit --bg-alpha wins; else the spec's canvas.bgAlpha; else opaque.
         bg_alpha = args.bg_alpha
@@ -292,7 +297,7 @@ def cli():
         render_to_png(args.nifti, args.out, layout=layout, style=style,
                       threshold=thresholds, cmap=cmap, names=names,
                       width=width, height=height, scale=args.scale,
-                      include_subcortical=not args.no_subcortical,
+                      include_subcortical=not args.no_subcortical, classify=not args.no_template,
                       background_alpha=bg_alpha, crop=args.crop,
                       colorbar=args.colorbar, colorbar_font=args.colorbar_font,
                       colorbar_fontsize=args.colorbar_fontsize)

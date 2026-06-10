@@ -150,7 +150,18 @@ def _deep_merge(base, over):
 
 
 # --- main render ----------------------------------------------------------
-def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=None, template_dir=None):
+def to_volume_layout(layout):
+    """Strip a layout to no-template / volume-only (M7): every panel shows only the voxel role
+    with no hemisphere split, so it validates + renders against a 'none' template (no shell)."""
+    out = {**layout, "panels": []}
+    for p in layout.get("panels", []):
+        c = p.get("content") or {}
+        out["panels"].append({**p, "content": {"roles": ["voxel"], "hemisphere": "both",
+                                               "categories": None, "representation": c.get("representation")}})
+    return out
+
+
+def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=None, template_dir=None, classify=True):
     """Stage a self-contained render dir: a copy of the single viewer with the overlay(s)
     processed in-process (same pipeline.py the browser runs) and written as ARRAYS
     (overlay_<i>.bin + meta in scene.json) — no GLB, no per-render template re-bake.
@@ -181,13 +192,18 @@ def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=Non
     metas = []
     for i, src in enumerate(niftis):
         name = names[i] or Path(src).name.replace(".nii.gz", "").replace(".nii", "")
-        meta = json.loads(P.process_nifti(str(src), name, thresholds[i]))
+        meta = json.loads(P.process_nifti(str(src), name, thresholds[i], classify=classify))
         # grab THIS overlay's buffers before the next process_nifti clears _BUFFERS
         metas.append(write_overlay_arrays(data, meta, P.get_all_buffers(), index=i))
 
     scene = json.loads((data / "scene.json").read_text())
     if not include_subcortical:
         scene.pop("subcortical", None)
+    if not classify:
+        # No-template / volume-only (M7): drop the anatomical shell; the volume stands alone.
+        scene.pop("cortex", None)
+        scene.pop("subcortical", None)
+        scene["templateMode"] = "none"
     scene["overlays"] = metas
     (data / "scene.json").write_text(json.dumps(scene))
     return out_dir
@@ -242,15 +258,17 @@ class RenderSession:
     def render(self, nifti, out_png=None, *, layout, style=None, threshold=2.3, cmap="auto",
                width=1600, height=1000, scale=2, include_subcortical=True,
                background="#ffffff", background_alpha=1.0, colorbar=True, colorbar_font=None,
-               colorbar_fontsize=None, crop="none", names=None, timeout_ms=90000, return_bytes=False):
+               colorbar_fontsize=None, crop="none", names=None, timeout_ms=90000, return_bytes=False,
+               classify=True):
         """Render one figure. Writes <out_png> (+ <out_png>_colorbars) when out_png is given;
         returns its Path. With return_bytes=True returns (brain_png_bytes, colorbar_png_bytes|None)
-        — the inline-display path. `nifti` is one path or a list (one overlay each)."""
+        — the inline-display path. `nifti` is one path or a list (one overlay each). classify=False
+        is the no-template / volume-only path (no anatomical shell)."""
         if names is None and style and isinstance(style.get("overlays"), list):
             names = [(o or {}).get("name") for o in style["overlays"]] or None
         n_overlays = 1 if isinstance(nifti, (str, Path)) else len(nifti)
         out_dir = prepare_render_dir(nifti, threshold, include_subcortical, names=names,
-                                     template_dir=self.template_dir)
+                                     template_dir=self.template_dir, classify=classify)
         config, transparent = _render_config(
             layout, style, cmap=cmap, width=width, height=height, scale=scale,
             background=background, colorbar=colorbar, colorbar_font=colorbar_font,

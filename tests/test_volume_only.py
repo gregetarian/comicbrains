@@ -38,6 +38,27 @@ def test_classify_true_never_produces_a_volume_bucket():
     assert "volume" not in meta["structures"]                       # regions, not the relaxed bucket
 
 
+def test_render_template_none_inline():
+    import glass_brains as gb
+    fig = gb.render(SPHERE, views=["dorsal"], grid="1x1", template="none",
+                    width=300, height=300, scale=1, colorbar=False)
+    assert fig.png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert fig.config["template"]["kind"] == "none"
+
+
+def test_cli_no_template_end_to_end(tmp_path):
+    import subprocess
+    import sys
+    out = tmp_path / "vol.png"
+    r = subprocess.run(
+        [sys.executable, "-m", "glass_brains.core", "render", SPHERE, "-o", str(out),
+         "--no-template", "--grid", "1x1", "--views", "dorsal",
+         "--width", "300", "--height", "300", "--scale", "1", "--no-colorbar"],
+        capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr[-2000:]
+    assert out.exists() and out.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 if __name__ == "__main__":
     test_categories_loaded_from_sidecar_match_defaults()
     test_classify_false_single_volume_bucket()

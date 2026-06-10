@@ -21,7 +21,7 @@ import base64
 import copy
 import os
 
-from .render import RenderSession, build_layout
+from .render import RenderSession, build_layout, to_volume_layout
 
 DEFAULT_VIEWS = ["left_lateral", "right_lateral", "left_medial", "right_medial",
                  "anterior", "dorsal", "subcortical_l", "subcortical_r"]
@@ -140,17 +140,21 @@ def render(nifti, *, out=None, layout=None, views=None, grid="2x4", style=None,
                                   colormapMode=colormapMode, gamma=gamma, clim=clim,
                                   threshold=threshold, clusterMin=clusterMin,
                                   positiveOnly=positiveOnly, voxels=voxels, units=units)
-    sess = session or RenderSession(template_dir=template)
+    is_none = template == "none"   # no-template / volume-only (M7): no shell, no hemisphere split
+    if is_none:
+        layout = to_volume_layout(layout)
+    sess = session or RenderSession(template_dir=(None if is_none else template))
     try:
         brain, cbar = sess.render(nifti, out, layout=layout, style=built, threshold=bake_thr,
                                   cmap=cmap, width=width, height=height, scale=scale,
                                   include_subcortical=include_subcortical, background=background,
                                   background_alpha=background_alpha, colorbar=colorbar,
-                                  crop=crop, names=names, return_bytes=True)
+                                  crop=crop, names=names, classify=not is_none, return_bytes=True)
     finally:
         if session is None:
             sess.close()
-    config = {"template": {"kind": "custom" if template else "mni", "dir": template, "space": "MNI152"},
+    kind = "none" if is_none else ("custom" if template else "mni")
+    config = {"template": {"kind": kind, "dir": (None if is_none else template), "space": "MNI152"},
               "layout": layout, "style": built,
               "render": {"width": width, "height": height, "background": background}}
     return Figure(brain, cbar, config, out)
