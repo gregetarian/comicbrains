@@ -150,7 +150,7 @@ def _deep_merge(base, over):
 
 
 # --- main render ----------------------------------------------------------
-def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=None):
+def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=None, template_dir=None):
     """Stage a self-contained render dir: a copy of the single viewer with the overlay(s)
     processed in-process (same pipeline.py the browser runs) and written as ARRAYS
     (overlay_<i>.bin + meta in scene.json) — no GLB, no per-render template re-bake.
@@ -172,6 +172,10 @@ def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=Non
     out_dir = Path(tempfile.mkdtemp(prefix="gb_render_"))
     shutil.copytree(WEB_DIR, out_dir, dirs_exist_ok=True)
     data = out_dir / "data"
+    # M4 hook (custom/non-MNI template, exercised in M9): overlay a template bundle's data/
+    # (cortex/subcortical GLBs + aseg + scene.json) on top of the bundled fsaverage assets.
+    if template_dir is not None:
+        shutil.copytree(Path(template_dir) / "data", data, dirs_exist_ok=True)
     P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
 
     metas = []
@@ -189,40 +193,21 @@ def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=Non
     return out_dir
 
 
-def render_to_png(nifti, out_png, *, layout, style=None, threshold=2.3, cmap="auto",
-                  width=1600, height=1000, scale=2, include_subcortical=True,
-                  background="#ffffff", background_alpha=1.0, colorbar=True, colorbar_font=None,
-                  colorbar_fontsize=None, crop="none", names=None, timeout_ms=90000):
-    """`nifti` is one path or a list of paths (one overlay each); `threshold` is a scalar
-    or per-overlay list. Per-overlay colour/threshold come from `style['overlays'][i]`.
-    `names` (optional) sets each overlay's colorbar label; if omitted it falls back to
-    `style['overlays'][i]['name']`, else the filename."""
-    n_overlays = 1 if isinstance(nifti, (str, Path)) else len(nifti)
-    if names is None and style and isinstance(style.get("overlays"), list):
-        names = [(o or {}).get("name") for o in style["overlays"]] or None
-    out_dir = prepare_render_dir(nifti, threshold, include_subcortical, names=names)
-
-    # Transparent background (Free Canvas): record bgAlpha in the layout so the WebGL
-    # clear is transparent; the screenshot below then captures real alpha. Default 1 =
-    # opaque, so every existing figure is byte-identical.
+def _render_config(layout, style, *, cmap, width, height, scale, background, colorbar,
+                   colorbar_font, colorbar_fontsize, background_alpha):
+    """Build the render-config.json the headless viewer consumes (the exact dict the old
+    render_to_png built inline). Returns (config, transparent)."""
+    # Transparent background (Free Canvas): record bgAlpha in the layout so the WebGL clear is
+    # transparent; the screenshot then captures real alpha. Default 1 = opaque → byte-identical.
     transparent = background_alpha < 1
     if transparent:
         layout = {**layout, "canvas": {**layout.get("canvas", {}), "bgAlpha": background_alpha}}
-
-    # CLI figures (print) want a few things the interactive viewer doesn't:
-    # thicker surface lines, a touch more breathing room between brains, and no
-    # faint subcortical glass shell. These are defaults — any explicit --flag in
-    # `style` wins via the deep-merge below.
-    cli_style = {
-        "margin": 1.05,                 # top row was a hair too close together
-        "outline": {"width": 7.0},      # surface lines read too thin at print res
-        "anatomy": {"maxOpacity": 0.0}, # drop the subcortical shell alpha entirely
-    }
+    # CLI figures (print) want thicker surface lines, a little more breathing room, and no faint
+    # subcortical glass shell. Defaults — any explicit flag in `style` wins via the deep-merge.
+    cli_style = {"margin": 1.05, "outline": {"width": 7.0}, "anatomy": {"maxOpacity": 0.0}}
     merged_style = _deep_merge(cli_style, style or {})
     merged_style["colormap"] = cmap
-
-    # Colorbar scaled to the figure (the fixed 240px bar looked tiny on big PNGs).
-    cb_w = round(width * 0.22)
+    cb_w = round(width * 0.22)   # colorbar scaled to the figure
     config = {
         "layout": layout,
         "style": merged_style,
@@ -232,57 +217,118 @@ def render_to_png(nifti, out_png, *, layout, style=None, threshold=2.3, cmap="au
                    "colorbarFontSize": colorbar_fontsize or max(13, round(width * 0.011)),
                    **({"colorbarFont": colorbar_font} if colorbar_font else {})},
     }
-    (out_dir / "render-config.json").write_text(json.dumps(config, indent=2))
+    return config, transparent
 
-    httpd, port = _serve_dir(out_dir)
-    try:
+
+class RenderSession:
+    """Holds ONE Playwright browser open across many renders (amortizes the ~0.7s launch) and
+    can return PNG *bytes* (for inline notebook display) as well as write files. render_to_png,
+    the notebook API (M5), and render_batch all go through this one path, so the byte-identical
+    output guarantee holds for every front-end.
+
+    Args: gpu=True swaps swiftshader for the ANGLE GL backend (faster locally, no GPU on CI);
+    template_dir overlays a custom/non-MNI template bundle (M9); keep_dirs leaves the staged
+    temp dirs for debugging.
+    """
+
+    def __init__(self, *, headless=True, gpu=False, template_dir=None, keep_dirs=False):
         from playwright.sync_api import sync_playwright
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(headless=True, args=[
-                "--use-gl=angle", "--use-angle=swiftshader", "--ignore-gpu-blocklist"])
-            page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
-            # domcontentloaded (not networkidle): the real readiness gate is __GB_DONE__
-            # below, and with vendored assets there is no late network to idle-wait on.
+        self._pw = sync_playwright().start()
+        args = ["--ignore-gpu-blocklist"] + ([] if gpu else ["--use-gl=angle", "--use-angle=swiftshader"])
+        self.browser = self._pw.chromium.launch(headless=headless, args=args)
+        self.template_dir = template_dir
+        self.keep_dirs = keep_dirs
+
+    def render(self, nifti, out_png=None, *, layout, style=None, threshold=2.3, cmap="auto",
+               width=1600, height=1000, scale=2, include_subcortical=True,
+               background="#ffffff", background_alpha=1.0, colorbar=True, colorbar_font=None,
+               colorbar_fontsize=None, crop="none", names=None, timeout_ms=90000, return_bytes=False):
+        """Render one figure. Writes <out_png> (+ <out_png>_colorbars) when out_png is given;
+        returns its Path. With return_bytes=True returns (brain_png_bytes, colorbar_png_bytes|None)
+        — the inline-display path. `nifti` is one path or a list (one overlay each)."""
+        if names is None and style and isinstance(style.get("overlays"), list):
+            names = [(o or {}).get("name") for o in style["overlays"]] or None
+        n_overlays = 1 if isinstance(nifti, (str, Path)) else len(nifti)
+        out_dir = prepare_render_dir(nifti, threshold, include_subcortical, names=names,
+                                     template_dir=self.template_dir)
+        config, transparent = _render_config(
+            layout, style, cmap=cmap, width=width, height=height, scale=scale,
+            background=background, colorbar=colorbar, colorbar_font=colorbar_font,
+            colorbar_fontsize=colorbar_fontsize, background_alpha=background_alpha)
+        (out_dir / "render-config.json").write_text(json.dumps(config, indent=2))
+
+        httpd, port = _serve_dir(out_dir)
+        page = self.browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
+        try:
+            # domcontentloaded (not networkidle): __GB_DONE__ is the real readiness gate and the
+            # vendored assets mean no late network to idle-wait on.
             page.goto(f"http://localhost:{port}/index.html?headless=1&config=render-config.json",
                       wait_until="domcontentloaded")
             page.wait_for_function("window.__GB_DONE__ === true || window.__GB_ERR__", timeout=timeout_ms)
             err = page.evaluate("window.__GB_ERR__ || null")
             if err:
                 raise RuntimeError(f"viewer error: {err}")
-            # Brain figure: hide the colorbar so the brains fill the full frame (never
-            # squashed), then screenshot.
+            # Brain: hide the colorbar so the brains fill the full frame, then screenshot to bytes.
             page.evaluate("() => { const c = document.querySelector('.colorbar'); if (c) c.style.display = 'none'; }")
-            # Transparent background: clear the page/#viewer fills so omit_background can
-            # capture the WebGL canvas's alpha (the canvas was already cleared transparent).
             if transparent:
                 page.evaluate("() => { for (const s of ['html','body','#viewer']) { const e = document.querySelector(s); if (e) e.style.background = 'transparent'; } }")
-            # --crop content: clip to the tight bounding box of the visible brains (CSS px;
-            # #viewer is at the page origin in headless, so the bbox doubles as a page clip).
             bbox = page.evaluate("window.__contentBBox && window.__contentBBox()") if crop == "content" else None
             if bbox:
-                page.screenshot(path=str(out_png), omit_background=transparent,
-                                clip={"x": bbox["x"], "y": bbox["y"], "width": bbox["w"], "height": bbox["h"]})
+                brain = page.screenshot(omit_background=transparent,
+                                        clip={"x": bbox["x"], "y": bbox["y"], "width": bbox["w"], "height": bbox["h"]})
             else:
-                page.locator("#viewer").screenshot(path=str(out_png), omit_background=transparent)
-            outputs = [out_png]
-            # Colorbar legend as a SEPARATE sidecar image (place it in your figure yourself).
+                brain = page.locator("#viewer").screenshot(omit_background=transparent)
+            cbar = None
             if colorbar:
-                # Reveal the bars and paint the strip opaque white so a multi-bar legend
-                # (taller strip, overlaps the brain) screenshots clean — no brain bleed-through
-                # in the gaps between rows. This is after the brain capture, so the figure is
-                # untouched; it only affects the separate legend sidecar.
+                # Reveal the bars on an opaque white strip so a multi-bar legend screenshots clean.
                 page.evaluate("() => { const c = document.querySelector('.colorbar');"
                               " if (c) { c.style.display = ''; c.style.background = '#ffffff'; c.style.padding = '6px 10px'; } }")
                 page.wait_for_timeout(60)
                 bar = page.locator('.colorbar')
                 if bar.count() and bar.bounding_box():
-                    side = Path(out_png)
-                    side = side.with_name(side.stem + "_colorbars" + side.suffix)
-                    bar.screenshot(path=str(side))
-                    outputs.append(side)
-            browser.close()
-    finally:
-        httpd.shutdown()
-    print("Rendered " + ", ".join(str(o) for o in outputs) +
-          f"  ({width}x{height} @{scale}x, {n_overlays} overlay{'s' if n_overlays != 1 else ''})")
+                    cbar = bar.screenshot()
+        finally:
+            page.close()
+            httpd.shutdown()
+            if not self.keep_dirs:
+                shutil.rmtree(out_dir, ignore_errors=True)
+
+        if out_png is not None:
+            Path(out_png).write_bytes(brain)
+            outputs = [out_png]
+            if cbar is not None:
+                side = Path(out_png).with_name(Path(out_png).stem + "_colorbars" + Path(out_png).suffix)
+                Path(side).write_bytes(cbar)
+                outputs.append(side)
+            print("Rendered " + ", ".join(str(o) for o in outputs) +
+                  f"  ({width}x{height} @{scale}x, {n_overlays} overlay{'s' if n_overlays != 1 else ''})")
+        return (brain, cbar) if return_bytes else (Path(out_png) if out_png is not None else brain)
+
+    def close(self):
+        self.browser.close()
+        self._pw.stop()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+
+
+def render_to_png(nifti, out_png, **kwargs):
+    """Byte-identical one-shot wrapper over RenderSession (existing CLI/callers unchanged)."""
+    with RenderSession() as s:
+        s.render(nifti, out_png, **kwargs)
     return out_png
+
+
+def render_batch(jobs, **session_kwargs):
+    """Render many figures reusing ONE browser. `jobs` is a list of dicts, each carrying
+    `nifti`, `out`/`out_png`, and the per-job render kwargs (layout, style, ...)."""
+    outs = []
+    with RenderSession(**session_kwargs) as s:
+        for job in jobs:
+            j = dict(job)
+            out = j.pop("out_png", None) or j.pop("out")
+            outs.append(s.render(j.pop("nifti"), out, **j))
+    return outs
