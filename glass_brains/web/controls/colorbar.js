@@ -49,9 +49,14 @@ export function createColorbar(container, { engine, config, colormaps, onHide })
         labels.className = 'colorbar-labels'; labels.style.width = cbW + 'px';
         if (config.render?.colorbarFont) labels.style.fontFamily = config.render.colorbarFont;
         if (config.render?.colorbarFontSize != null) labels.style.fontSize = config.render.colorbarFontSize + 'px';
-        row.append(canvas, labels);
+        // M11/M5: value-unit caption (z / t / % …) so a reader of the figure knows WHAT the
+        // numbers are. Same DOM in browser + the headless colorbar sidecar.
+        const units = document.createElement('div');
+        units.className = 'cbar-units'; units.style.width = cbW + 'px';
+        if (config.render?.colorbarFont) units.style.fontFamily = config.render.colorbarFont;
+        row.append(canvas, labels, units);
         wrap.append(row);
-        return { i, ov, canvas, labels, ctx: canvas.getContext('2d') };
+        return { i, ov, canvas, labels, units, ctx: canvas.getContext('2d') };
     });
 
     function update() {
@@ -82,6 +87,8 @@ export function createColorbar(container, { engine, config, colormaps, onHide })
             const ticks = diverging ? [minVal, 0, maxVal]
                 : negativeOnly ? [minVal, minVal / 2, 0] : [0, maxVal / 2, maxVal];
             bar.labels.innerHTML = ticks.map((v) => `<span>${v.toFixed(1)}</span>`).join('');
+            const u = os.units && os.units.value;          // 'stat' = unitless default → no caption
+            bar.units.textContent = (u && u !== 'stat') ? u : '';
         }
     }
 
