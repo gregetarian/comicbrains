@@ -120,6 +120,23 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
     const gridOverlay = el('div', 'fc-gridlines');   // faint grid shown while snapping
     const clone = (o) => JSON.parse(JSON.stringify(o));
     let home = clone(config.layout);                 // baseline arrangement, for "Reset"
+
+    // Undo / redo of the whole layout (Cmd/Ctrl+Z; add Shift, or Ctrl+Y, to redo). pushHistory()
+    // is called just before each edit; undo swaps the current layout for the last snapshot.
+    let undoStack = [], redoStack = [];
+    function pushHistory() { undoStack.push(clone(config.layout)); if (undoStack.length > 60) undoStack.shift(); redoStack = []; }
+    function undo() { if (!undoStack.length) return; redoStack.push(clone(config.layout)); config.layout = undoStack.pop(); onStructureChange(); }
+    function redo() { if (!redoStack.length) return; undoStack.push(clone(config.layout)); config.layout = redoStack.pop(); onStructureChange(); }
+    const onKey = (e) => {
+        if (layout().mode !== 'free') return;
+        const t = e.target;
+        if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
+        const k = (e.key || '').toLowerCase();
+        if ((e.metaKey || e.ctrlKey) && k === 'z') { e.preventDefault(); e.shiftKey ? redo() : undo(); }
+        else if ((e.metaKey || e.ctrlKey) && k === 'y') { e.preventDefault(); redo(); }
+    };
+    window.addEventListener('keydown', onKey);
+
     const toolbar = buildToolbar();
 
     function layout() { return config.layout; }
@@ -165,6 +182,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
 
     // --- structural ops (need an engine rebuild) ---
     function seedGrid(r, c) {
+        pushHistory();
         const pad = 0.012, list = [];
         for (let i = 0; i < r * c; i++) {
             const ri = Math.floor(i / c), ci = i % c;
@@ -177,6 +195,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         onStructureChange();
     }
     function addPanel() {
+        pushHistory();
         const p = applyView({ id: newPanelId(), framing: { fit: 'auto', margin: 1.1 } }, 'dorsal');
         p.place = { x: 0.35, y: 0.35, w: 0.3, h: 0.3, z: maxZ() + 1 };
         panels().push(p);
@@ -184,6 +203,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
     }
     function removePanel(idx) {
         if (panels().length <= 1) return;     // keep at least one
+        pushHistory();
         panels().splice(idx, 1);
         onStructureChange();
     }
@@ -191,6 +211,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
     // Restore each panel that existed in the baseline to its original place/rotate/slice/
     // view (matched by id); panels added since are left as-is. Undoes manual edits.
     function resetLayout() {
+        pushHistory();
         const byId = new Map((home.panels || []).map((p) => [p.id, p]));
         for (const p of panels()) {
             const h = byId.get(p.id); if (!h) continue;
@@ -321,7 +342,8 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
             if (rec) setActive(rec.panel.id);          // sticky-activate the panel being pressed
             if (fr) fr.classList.add('fc-editing');   // keep chrome shown during the drag
             const x0 = e.clientX, y0 = e.clientY, ctx = onStart(e);
-            const move = (ev) => onMove(ctx, ev.clientX - x0, ev.clientY - y0);
+            let moved = false;   // snapshot once, on the first actual move (a bare click adds no undo step)
+            const move = (ev) => { if (!moved) { moved = true; pushHistory(); } onMove(ctx, ev.clientX - x0, ev.clientY - y0); };
             const up = () => {
                 handle.style.cursor = '';
                 if (fr) fr.classList.remove('fc-editing');
@@ -405,6 +427,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
     }
     function destroy() {
         canvas.removeEventListener('pointerdown', onCanvasDown);
+        window.removeEventListener('keydown', onKey);
         frames.forEach((fr) => fr.el.remove());
         frames = [];
         toolbar.remove();
