@@ -171,6 +171,16 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
         g.append(picker.el);
         infoIcon(picker.el, 'Colormap for this overlay — click for swatches, or step with ‹ ›. Each overlay can use a different one; sequential vs diverging is auto-picked from the data.');
 
+        // Colour-scale mode (M11 parity: was CLI/notebook-only). Recolour only, no re-mesh.
+        const modeSel = document.createElement('select'); modeSel.className = 'btn';
+        for (const m of ['auto', 'sequential', 'diverging']) {
+            const o = document.createElement('option'); o.value = m; o.textContent = m; modeSel.append(o);
+        }
+        modeSel.value = os.colormapMode || 'auto';
+        modeSel.addEventListener('change', () => { set({ colormapMode: modeSel.value }); engine.recolor(); });
+        g.append(modeSel);
+        infoIcon(modeSel, 'Colour scale: auto (sequential/diverging picked from the data), or force one.');
+
         const smooth = btn('Smooth');
         bindToggle(smooth, os.representation === 'smooth', (on) => set({ voxel: { representation: on ? 'smooth' : 'blocky' } }), 'Smooth (marching-cubes) vs blocky voxels.');
         g.append(smooth);
@@ -192,6 +202,12 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
             engine.applySmoothing(i);
         }, { min: 0, max: 20, step: 1 }, 'Extra surface smoothing of the smooth (marching-cubes) mesh — rounds rough cluster surfaces (size-preserving). Auto-switches the overlay to Smooth. 0 = off; most visible on large/irregular blobs.', (v) => ({ voxel: { smoothing: v } }));
         g.append(sm.wrap);
+
+        const gam = sw('gamma');
+        ovRange(gam.range, os.gamma ?? 0.5, (v) => { set({ gamma: v }); engine.recolor(); },
+                { min: 0.2, max: 1.5, step: 0.05 },
+                'Colormap gamma (power-law) — <1 lifts low values (0.5 = sqrt).', (v) => ({ gamma: v }));
+        g.append(gam.wrap);
 
         const pos = btn('+only');
         bindToggle(pos, !!os.positiveOnly, (on) => { set({ positiveOnly: on }); engine.applyStyle(); }, 'Show only positive values.');
