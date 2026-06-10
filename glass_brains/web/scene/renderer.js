@@ -614,6 +614,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     function zoomPanel(i, factor) {
         const p = panels[i]; if (!p) return;
         p.zoom = Math.min(8, Math.max(0.25, (p.zoom || 1) * factor));
+        if (p.def) p.def.zoom = p.zoom;   // M3: persist into the config panel so it round-trips through buildSpec
     }
 
     // Scale every outline pass's line width by `f`. Outline width is in device

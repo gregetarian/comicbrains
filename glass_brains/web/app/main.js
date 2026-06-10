@@ -171,6 +171,10 @@ async function runHeadless() {
     document.documentElement.style.setProperty('--cbstrip', '0px');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
     engine.resize(canvas.clientWidth, canvas.clientHeight);
+    // M3: reproduce a panned/zoomed canvas from the spec. Gated on a non-identity view so the
+    // default (s=1) is a no-op and every existing headless figure stays byte-identical.
+    const lv = config.layout.view;
+    if (lv && lv.s != null && (lv.s !== 1 || lv.cx != null || lv.cy != null)) engine.setView(lv);
     document.getElementById('loading').style.display = 'none';
     for (let i = 0; i < 4; i++) { engine.renderFrame(); colorbar?.update(); }
     requestAnimationFrame(() => {
@@ -499,6 +503,9 @@ function startLoopAndResize() {
 async function copyCliCommand() {
     const btn = document.getElementById('c-cli');
     const label = btn.textContent;
+    // M3: capture the live whole-canvas pan/zoom into the config so buildSpec/figure.json
+    // round-trips it (identity by default → existing figures unchanged).
+    if (engine && engine.getView) { const v = engine.getView(); config.layout.view = { s: v.s, cx: v.cx, cy: v.cy }; }
     const text = buildRenderText({ config, overlays, preset, colormaps, panelZoomUsed });
     const flash = (m) => { btn.textContent = m; setTimeout(() => { btn.textContent = label; }, 1600); };
     console.log(text);

@@ -46,6 +46,10 @@ export function isFreeFigure(config) {
 export function buildSpec(config) {
     const cv = config.layout && config.layout.canvas;
     return {
+        // M3: the ONE figure document. layout carries view{s,cx,cy} + per-panel zoom/rotate/slice
+        // (declared in config-schema DEFAULTS), template records the space, style the full per-overlay
+        // style — so Copy-CLI, --spec, the notebook render_spec, presets, and URL-state never drift.
+        template: config.template,
         layout: config.layout,
         style: config.style,
         render: {

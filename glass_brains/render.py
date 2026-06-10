@@ -105,11 +105,13 @@ def load_spec(path):
     ({grid?, canvas?, panels:[...]}) or a full config ({layout, style?, render?}).
     Returns (layout, style, render) where style/render are {} if absent, so the
     caller can deep-merge them under the explicit --flags."""
-    spec = json.loads(Path(path).read_text())
-    layout = spec.get("layout", spec)            # accept a full config OR a bare layout
+    from . import spec as gb_spec
+    doc = json.loads(Path(path).read_text())
+    gb_spec.validate(doc)                        # loud failure on a malformed spec (mirrors the browser)
+    layout = doc.get("layout", doc)              # accept a full config OR a bare layout
     if "panels" not in layout:
         raise ValueError(f"spec '{path}' has no layout.panels")
-    return layout, spec.get("style", {}), spec.get("render", {})
+    return layout, doc.get("style", {}), doc.get("render", {})
 
 
 # --- background static server --------------------------------------------
