@@ -128,7 +128,7 @@ async function main() {
         download: downloadText,
         onApplied: () => {
             engine.applyStyle(); engine.recolor(); engine.applySmoothing();
-            buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay });
+            buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface });
             syncGlobalControls();
         },
     });
@@ -209,7 +209,8 @@ async function loadNeurosynthDemo() {
             const { meta, buffers } = await processNifti(new File([blob], ov.file), ov.threshold ?? 2.3,
                 (m) => setLoading(m + ' — ' + (ov.name || ov.file), note));
             if (ov.name) meta.name = ov.name;
-            overlays.push({ meta, meshObjs: buildOverlayMeshes(meta, buffers, overlays.length) });
+            overlays.push({ meta, meshObjs: buildOverlayMeshes(meta, buffers, overlays.length),
+                            src: { file: new File([blob], ov.file), threshold: ov.threshold ?? 2.3 } });
             (config.style.overlays ||= []).push(ov.style || {});
         } catch (e) { console.warn('default overlay failed:', ov.file, e); }
     }
@@ -217,12 +218,42 @@ async function loadNeurosynthDemo() {
     setLoading(null);
 }
 
-/** Build + register one overlay from a (meta, flat-buffers) pair, then rebuild. */
-function addOverlay(meta, buffers) {
+/** Build + register one overlay from a (meta, flat-buffers) pair, then rebuild. `src`
+ *  ({file, threshold}) is kept so the overlay can be re-meshed for surface mode. */
+function addOverlay(meta, buffers, src) {
     const meshObjs = buildOverlayMeshes(meta, buffers, overlays.length);
-    overlays.push({ meta, meshObjs });
+    overlays.push({ meta, meshObjs, src });
     (config.style.overlays ||= []).push({});
     rebuild();
+}
+
+/** Switch overlay i to/from surface-projection mode. Surface geometry is meshed on demand
+ *  (re-runs the pipeline with surface=True, lazy-loading the cortical sidecar) the first time. */
+async function setOverlaySurface(i, repSel) {
+    const o = overlays[i];
+    if (!o) return;
+    try {
+        if (!o.src || !o.src.file) {
+            setLoading('Surface mode needs a re-meshable map (drag a NIfTI in, or use Demo).');
+            setTimeout(() => setLoading(null), 2600);
+            if (repSel) repSel.value = o.meta && o.meta.surface ? 'surface' : 'smooth';
+            return;
+        }
+        if (!o._surfaced) {
+            const { meta, buffers } = await processNifti(o.src.file, o.src.threshold,
+                (m) => setLoading(m, 'First use loads the cortical surface (~11 MB), then re-meshes.'), true);
+            for (const mo of o.meshObjs) mo.mesh.geometry.dispose();
+            o.meta = meta; o.meshObjs = buildOverlayMeshes(meta, buffers, i); o._surfaced = true;
+            setLoading(null);
+        }
+        setOverlayStyle(config, i, { voxel: { representation: 'surface' } });
+        rebuild();
+    } catch (err) {
+        console.error(err);
+        setLoading('Surface projection failed: ' + (err && err.message));
+        setTimeout(() => setLoading(null), 3000);
+        if (repSel) repSel.value = 'smooth';
+    }
 }
 
 /** Process uploaded NIfTI File(s) entirely in-browser (lazy-loads Pyodide). */
@@ -242,7 +273,7 @@ async function handleUpload(files) {
                 await new Promise((r) => setTimeout(r, 2500));
                 continue;
             }
-            addOverlay(meta, buffers);
+            addOverlay(meta, buffers, { file: files[k], threshold: thr });
         }
         setLoading(null);
     } catch (err) {
@@ -346,7 +377,7 @@ function rebuild() {
     // Interactive-only chrome (control rows, the Colorbar toggle state, hover zoom buttons).
     if (!isHeadless) {
         const tgl = document.getElementById('c-colorbar'); if (tgl) tgl.classList.toggle('active', colorbarsVisible);
-        buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay });
+        buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface });
         if (config.layout.mode === 'free') {
             // Free Canvas: the per-panel editor frames replace the hover +/- zoom.
             zoomEls.forEach((el) => el.remove()); zoomEls = [];
@@ -386,7 +417,7 @@ function randomizeColormaps() {
     const used = new Set();
     overlays.forEach((o, i) => { const name = randomColormapName(colormaps, used); used.add(name); setOverlayStyle(config, i, { colormap: name }); });
     engine.recolor();
-    buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay });
+    buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface });
 }
 
 /** Push config.style's global fields back onto the surface-row controls (after a preset
