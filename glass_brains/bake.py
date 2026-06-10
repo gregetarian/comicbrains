@@ -68,8 +68,12 @@ def bake(demo_nifti=None):
     assert aseg.max() < 256, f"aseg has labels >= 256 ({aseg.max()}); need a wider dtype"
     aseg_gz = gzip.compress(aseg.astype(np.uint8).tobytes(order="C"), compresslevel=9)
     (DATA / "aseg_uint8.bin.gz").write_bytes(aseg_gz)
+    # Ship the category tables AS DATA so init_aseg is data-driven (a custom seg carries its own; M9).
     (DATA / "aseg.json").write_text(json.dumps(
-        {"dims": list(aseg.shape), "dtype": "uint8", "order": "C", "affine": gb._aseg_affine.tolist()}, indent=2))
+        {"dims": list(aseg.shape), "dtype": "uint8", "order": "C", "affine": gb._aseg_affine.tolist(),
+         "categories": {str(k): v for k, v in P.ASEG_CATEGORIES.items()},
+         "structureCategories": list(P.STRUCTURE_CATEGORIES),
+         "hasWhiteSurface": False}, indent=2))
 
     # keep the browser's Pyodide copy byte-identical to the canonical pipeline
     shutil.copy2(PKG / "pipeline.py", WEB / "pyodide" / "pipeline.py")

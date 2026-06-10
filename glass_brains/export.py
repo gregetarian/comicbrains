@@ -103,7 +103,8 @@ def export_volume(volume_info, bin_path, json_path):
 
 
 def write_scene_json(out_dir, cortex_meshes=None, subcortical_meshes=None,
-                     subcortical_colors=None, overlays=None):
+                     subcortical_colors=None, overlays=None, space='MNI152',
+                     template_mode='mni', has_white_surface=False):
     """Write the scene.json manifest that the Three.js viewer reads.
 
     Parameters
@@ -123,7 +124,9 @@ def write_scene_json(out_dir, cortex_meshes=None, subcortical_meshes=None,
 
     scene = {
         'version': '2.0',
-        'space': 'MNI152',
+        'space': space,                       # read by the viewer to gate the view vocabulary (M6)
+        'templateMode': template_mode,        # 'mni' | 'custom' | 'none'
+        'hasWhiteSurface': has_white_surface,  # gates surface-projection availability (M8)
     }
 
     if cortex_meshes:

@@ -42,8 +42,10 @@ ASEG_CATEGORIES = {
 STRUCTURE_CATEGORIES = ['lh_cortex', 'rh_cortex', 'subcort_l', 'subcort_r',
                         'cereb_l', 'cereb_r', 'brainstem']
 
-# Segmentation volume, loaded once via init_aseg().
-_ASEG = {'data': None, 'affine': None}
+# Segmentation volume + its category tables, loaded once via init_aseg(). The category maps
+# above are the bundled fsaverage defaults; init_aseg overrides them from the sidecar when a
+# custom template's segmentation ships its own (M9), so classification is DATA, not hardcoded.
+_ASEG = {'data': None, 'affine': None, 'categories': None, 'structureCategories': None}
 # Staging for the most recent process_nifti() result (flat buffer list).
 _BUFFERS = []
 
@@ -58,6 +60,11 @@ def init_aseg(gz_bytes, meta_json):
     raw = gzip.decompress(bytes(gz_bytes))
     _ASEG['data'] = np.frombuffer(raw, dtype=np.uint8).reshape(tuple(meta['dims']))
     _ASEG['affine'] = np.asarray(meta['affine'], dtype=float)
+    # Category tables are DATA (a custom seg can drive its own classification, M9); fall back to
+    # the bundled fsaverage tables when the sidecar omits them, so fsaverage stays byte-identical.
+    _ASEG['categories'] = ({int(k): v for k, v in meta['categories'].items()}
+                           if meta.get('categories') else ASEG_CATEGORIES)
+    _ASEG['structureCategories'] = meta.get('structureCategories') or STRUCTURE_CATEGORIES
 
 
 def load_stat_map(src, filename=None, threshold=2.3):
@@ -146,8 +153,13 @@ def _voxel_mesh(mask, *fields):
             [np.concatenate(f).astype(np.float32) for f in all_fields])
 
 
-def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine):
-    """Classify each non-zero overlay voxel by its aseg brain region."""
+def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine,
+                            categories=None, structure_categories=None):
+    """Classify each non-zero overlay voxel by its aseg brain region. `categories`
+    (label-id -> category) and `structure_categories` (ordered category list) default to the
+    bundled fsaverage tables but may be supplied (custom template, M9)."""
+    categories = categories if categories is not None else ASEG_CATEGORIES
+    structure_categories = structure_categories if structure_categories is not None else STRUCTURE_CATEGORIES
     nz_ijk = np.argwhere(data != 0)
     if len(nz_ijk) == 0:
         return {}
@@ -157,11 +169,11 @@ def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine):
     aseg_ijk = np.round(
         (inv_aseg @ np.column_stack([nz_world, np.ones(len(nz_world))]).T).T[:, :3]
     ).astype(int)
-    masks = {cat: np.zeros(data.shape, dtype=bool) for cat in STRUCTURE_CATEGORIES}
+    masks = {cat: np.zeros(data.shape, dtype=bool) for cat in structure_categories}
     for ov_idx, (ai, aj, ak) in zip(nz_ijk, aseg_ijk):
         if (0 <= ai < aseg_data.shape[0] and 0 <= aj < aseg_data.shape[1]
                 and 0 <= ak < aseg_data.shape[2]):
-            cat = ASEG_CATEGORIES.get(int(aseg_data[ai, aj, ak]))
+            cat = categories.get(int(aseg_data[ai, aj, ak]))
             if cat:
                 masks[cat][tuple(ov_idx)] = True
     return {cat: mask for cat, mask in masks.items() if mask.any()}
@@ -232,15 +244,24 @@ def _stage_mesh(verts, faces, values, clusters):
             'nverts': int(verts.shape[0]), 'ntris': nidx // 3}
 
 
-def process_nifti(src, name, threshold=2.3):
+def process_nifti(src, name, threshold=2.3, classify=True):
     """Run the full pipeline on a NIfTI (path or bytes). Returns a JSON meta string;
-    geometry arrays are staged in _BUFFERS for retrieval via get_all_buffers()."""
+    geometry arrays are staged in _BUFFERS for retrieval via get_all_buffers().
+
+    classify=True (default) buckets voxels by aseg region. classify=False (or no aseg loaded)
+    is the no-template / volume-only mode (M7): every supra-threshold voxel goes into one
+    'volume' bucket, meshed in the map's own space with no anatomical classification."""
     _BUFFERS.clear()
     data, affine = load_stat_map(src, name, threshold)
     cluster_data = cluster_sizes(data)
 
     aseg_d, aseg_a = _ASEG['data'], _ASEG['affine']
-    cats = classify_overlay_voxels(data, affine, aseg_d, aseg_a)
+    if classify and aseg_d is not None:
+        cats = classify_overlay_voxels(data, affine, aseg_d, aseg_a,
+                                       _ASEG.get('categories'), _ASEG.get('structureCategories'))
+    else:
+        m = data != 0
+        cats = {'volume': m} if m.any() else {}
 
     # global clim + diverging from all categorised voxels
     all_vals = np.concatenate([data[m] for m in cats.values()]) if cats else np.array([0.0])
