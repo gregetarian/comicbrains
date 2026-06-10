@@ -367,6 +367,69 @@ def render_batch(jobs, **session_kwargs):
     return outs
 
 
+def render_sweep(nifti, out, *, layout, param, values, cols=None, template_dir=None, **render_kwargs):
+    """Small-multiples sweep (M10): render one panel per value of `param` ('cluster' or 'threshold')
+    and montage them into a grid PNG, reusing ONE browser. clusterMin is a live filter; threshold
+    re-meshes per tile. Returns the montage path."""
+    import io
+    import math
+    from PIL import Image, ImageDraw
+    cols = cols or min(len(values), 4)
+    rows = math.ceil(len(values) / cols)
+    tiles = []
+    with RenderSession(template_dir=template_dir) as s:
+        for v in values:
+            kw = dict(render_kwargs)
+            if param == "threshold":
+                kw["threshold"] = v
+            else:  # cluster-extent: a live style filter (no re-mesh)
+                st = dict(kw.get("style") or {})
+                st["voxel"] = {**(st.get("voxel") or {}), "clusterMin": v}
+                kw["style"] = st
+            png, _ = s.render(nifti, layout=layout, colorbar=False, return_bytes=True, **kw)
+            tiles.append((v, Image.open(io.BytesIO(png)).convert("RGB")))
+    tw, th = tiles[0][1].size
+    canvas = Image.new("RGB", (cols * tw, rows * th), "white")
+    label = f"{'k' if param == 'cluster' else 'thr'}="
+    for i, (v, t) in enumerate(tiles):
+        x, y = (i % cols) * tw, (i // cols) * th
+        canvas.paste(t, (x, y))
+        ImageDraw.Draw(canvas).text((x + 8, y + 6), f"{label}{v:g}", fill="#333")
+    canvas.save(out)
+    print(f"Wrote sweep ({param}={','.join(f'{v:g}' for v in values)}) -> {out}")
+    return out
+
+
+def colorbar_svg(out, *, colormap, vmin, vmax, units=None, n=64, width=460, bar_h=22, colormaps_json=None):
+    """Write a crisp VECTOR colorbar legend as SVG (M10): a gradient sampled from the colormap LUT +
+    three tick labels + optional units. The brain itself stays raster (a shaded volume render);
+    only the legend is vectorised, where that is both correct and what journals want."""
+    cj = colormaps_json or json.loads((WEB_DIR / "data" / "colormaps.json").read_text())
+    nn = cj["n"]
+    lut = (cj["maps"].get(colormap) or next(iter(cj["maps"].values())))["lut"]
+
+    def hexat(t):
+        x = max(0.0, min(1.0, t)) * (nn - 1)
+        i = min(nn - 2, int(x))
+        f = x - i
+        c = [lut[i][k] + (lut[i + 1][k] - lut[i][k]) * f for k in range(3)]
+        return "#%02x%02x%02x" % tuple(max(0, min(255, round(v * 255))) for v in c)
+
+    pad = 4
+    stops = "".join(f'<stop offset="{j/(n-1)*100:.1f}%" stop-color="{hexat(j/(n-1))}"/>' for j in range(n))
+    ticks = [(vmin, "start"), ((vmin + vmax) / 2, "middle"), (vmax, "end")]
+    tx = "".join(f'<text x="{pad + p*(width-1):.1f}" y="{bar_h+13}" font-size="11" font-family="serif" '
+                 f'text-anchor="{a}" fill="#555">{v:.1f}</text>' for (v, a), p in zip(ticks, (0, 0.5, 1.0)))
+    uh = 14 if units and units != "stat" else 0
+    ut = (f'<text x="{pad + width/2:.0f}" y="{bar_h+27}" font-size="11" font-family="serif" '
+          f'text-anchor="middle" fill="#555">{units}</text>') if uh else ""
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width + 2*pad}" height="{bar_h + 16 + uh}">'
+           f'<defs><linearGradient id="cb">{stops}</linearGradient></defs>'
+           f'<rect x="{pad}" y="0" width="{width}" height="{bar_h}" fill="url(#cb)" stroke="#d0d0d0"/>{tx}{ut}</svg>')
+    Path(out).write_text(svg)
+    return out
+
+
 def region_report(nifti, threshold=2.3, template_dir=None):
     """Per-region supra-threshold voxel counts for a map, from the aseg classification the pipeline
     already computes (M10). Returns {category: voxel_count}. Uses the bundled fsaverage aseg, or a

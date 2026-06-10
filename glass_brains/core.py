@@ -204,6 +204,10 @@ def cli():
     r.add_argument('--gif', action='store_true', help='assemble the orbit frames into a GIF (needs imageio)')
     r.add_argument('--regions', default=None,
                    help='also write a per-region supra-threshold voxel-count CSV to this path')
+    r.add_argument('--sweep', default=None,
+                   help="small-multiples sweep of one map, e.g. 'cluster=50,100,200' or 'threshold=2.3,3.1,4'")
+    r.add_argument('--colorbar-svg', action='store_true',
+                   help='also write the colorbar legend as vector SVG (<out>_colorbars.svg)')
 
     args = parser.parse_args()
 
@@ -332,7 +336,13 @@ def cli():
                       template_dir=args.template, width=width, height=height, scale=args.scale,
                       include_subcortical=not args.no_subcortical, classify=not args.no_template,
                       background_alpha=bg_alpha, crop=args.crop)
-        if args.orbit is not None:                  # turntable animation (M10)
+        if args.sweep is not None:                  # threshold/cluster sweep small-multiples (M10)
+            from .render import render_sweep
+            pname, vals = args.sweep.split('=', 1)
+            cast = float if pname.strip() == 'threshold' else int
+            render_sweep(args.nifti[0], args.out, param=pname.strip(),
+                         values=[cast(x) for x in vals.split(',')], **common)
+        elif args.orbit is not None:                # turntable animation (M10)
             from .render import render_orbit
             render_orbit(args.nifti, args.out, frames=args.frames, degrees=args.orbit,
                          fps=args.fps, gif=args.gif, **common)
@@ -351,6 +361,27 @@ def cli():
                     for cat, n in region_report(nif, thr, template_dir=args.template).items():
                         w.writerow([Path(nif).name, cat, n])
             print('Wrote region report ->', args.regions)
+
+        if args.colorbar_svg:                       # vector colorbar legend(s) (M10)
+            from .render import colorbar_svg
+            from . import pipeline as P
+            data = (Path(args.template) / "data") if args.template else (WEB_DIR / "data")
+            P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
+            cm = data / "colormaps.json"
+            cj = json.loads((cm if cm.exists() else WEB_DIR / "data" / "colormaps.json").read_text())
+            ov, units = style.get('overlays') or [], (style.get('units') or {}).get('value')
+            for i, nif in enumerate(args.nifti):
+                thr = thresholds[i] if isinstance(thresholds, list) else thresholds
+                meta = json.loads(P.process_nifti(str(nif), Path(nif).name, thr))
+                m, div, neg = meta.get('maxAbsValue', 1.0), meta.get('diverging'), meta.get('negativeOnly')
+                ocmap = ((ov[i].get('colormap') if i < len(ov) and (ov[i] or {}).get('colormap') else None)
+                         or (cmap if cmap != 'auto' else None) or ('coolwarm' if div else 'viridis'))
+                vmin, vmax = (-m if (div or neg) else 0.0), (0.0 if neg else m)
+                side = Path(args.out)
+                suffix = f"_overlay{i}" if len(args.nifti) > 1 else ""
+                colorbar_svg(side.with_name(side.stem + suffix + "_colorbars.svg"),
+                             colormap=ocmap, vmin=vmin, vmax=vmax, units=units, colormaps_json=cj)
+            print('Wrote SVG colorbar legend(s)')
 
     else:
         parser.print_help()
