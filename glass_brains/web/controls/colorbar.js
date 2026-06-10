@@ -4,7 +4,7 @@
  * as the voxel shader:  value → t (gamma, seq/div, +guard) → LUT (sRGB)
  *   → sRGB→linear albedo → ×emissive + glint → linear→sRGB.
  */
-import { resolveColormap, sampleLUT, srgbToLinear, linearToSrgb, valueToT, clamp01 } from '../core/colormap.js';
+import { resolveColormap, sampleLUT, srgbToLinear, linearToSrgb, valueToT, clamp01, deriveMaxAbs } from '../core/colormap.js';
 import { overlayStyle } from '../core/config-schema.js';
 
 // View-space half-vector z for a front-facing swatch (matches the shader glint).
@@ -49,9 +49,14 @@ export function createColorbar(container, { engine, config, colormaps, onHide })
         labels.className = 'colorbar-labels'; labels.style.width = cbW + 'px';
         if (config.render?.colorbarFont) labels.style.fontFamily = config.render.colorbarFont;
         if (config.render?.colorbarFontSize != null) labels.style.fontSize = config.render.colorbarFontSize + 'px';
-        row.append(canvas, labels);
+        // M11/M5: value-unit caption (z / t / % …) so a reader of the figure knows WHAT the
+        // numbers are. Same DOM in browser + the headless colorbar sidecar.
+        const units = document.createElement('div');
+        units.className = 'cbar-units'; units.style.width = cbW + 'px';
+        if (config.render?.colorbarFont) units.style.fontFamily = config.render.colorbarFont;
+        row.append(canvas, labels, units);
         wrap.append(row);
-        return { i, ov, canvas, labels, ctx: canvas.getContext('2d') };
+        return { i, ov, canvas, labels, units, ctx: canvas.getContext('2d') };
     });
 
     function update() {
@@ -59,16 +64,19 @@ export function createColorbar(container, { engine, config, colormaps, onHide })
         for (const bar of bars) {
             const os = overlayStyle(config, bar.i);
             const diverging = !!bar.ov.diverging;
-            const maxAbs = bar.ov.maxAbsValue ?? 1.0;
-            const { name, mode, divergingMapOnPositive } = resolveColormap(os, diverging, colormaps);
+            const negativeOnly = !!bar.ov.negativeOnly;
+            const maxAbs = deriveMaxAbs(os.clim, bar.ov.maxAbsValue ?? 1.0);   // clim pins the bar to match the voxels
+            const { name, mode, divergingMapOnPositive, divergingMapOnNegative } = resolveColormap(os, diverging, colormaps, negativeOnly);
             const cmap = colormaps.get(name);
             if (!cmap) continue;
             const W = bar.canvas.width, H = bar.canvas.height;
-            const minVal = diverging ? -maxAbs : 0, maxVal = maxAbs;
+            // Single-signed negative data reads as [-maxAbs, 0]; positive as [0, maxAbs]; diverging spans both.
+            const minVal = (diverging || negativeOnly) ? -maxAbs : 0;
+            const maxVal = negativeOnly ? 0 : maxAbs;
             const img = bar.ctx.createImageData(W, H);
             for (let x = 0; x < W; x++) {
                 const value = minVal + (maxVal - minVal) * (x / (W - 1));
-                const t = valueToT(value, maxAbs, mode, os.gamma, divergingMapOnPositive);
+                const t = valueToT(value, maxAbs, mode, os.gamma, divergingMapOnPositive, divergingMapOnNegative);
                 const [R, G, B] = swatch(t, os, lighting, cmap);
                 for (let y = 0; y < H; y++) {
                     const k = (y * W + x) * 4;
@@ -76,8 +84,11 @@ export function createColorbar(container, { engine, config, colormaps, onHide })
                 }
             }
             bar.ctx.putImageData(img, 0, 0);
-            const ticks = diverging ? [minVal, 0, maxVal] : [0, maxVal / 2, maxVal];
+            const ticks = diverging ? [minVal, 0, maxVal]
+                : negativeOnly ? [minVal, minVal / 2, 0] : [0, maxVal / 2, maxVal];
             bar.labels.innerHTML = ticks.map((v) => `<span>${v.toFixed(1)}</span>`).join('');
+            const u = os.units && os.units.value;          // 'stat' = unitless default → no caption
+            bar.units.textContent = (u && u !== 'stat') ? u : '';
         }
     }
 

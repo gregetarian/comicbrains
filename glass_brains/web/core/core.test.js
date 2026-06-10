@@ -10,8 +10,8 @@ import { resolveCamera, cameraBasis, PLANES } from './cameras.js';
 import { aabbOfPositions, mergeAABB, frameContent } from './framing.js';
 import { layoutGrid, freeRect } from './grid.js';
 import { visible } from './visibility.js';
-import { valueToT, resolveColormap, loadColormaps, sampleLUT } from './colormap.js';
-import { normalizeConfig, validateConfig } from './config-schema.js';
+import { valueToT, resolveColormap, loadColormaps, sampleLUT, deriveMaxAbs } from './colormap.js';
+import { normalizeConfig, validateConfig, overlayStyle, DEFAULTS } from './config-schema.js';
 import { applyView, VIEWS } from './views.js';
 import { resolveConfig } from './presets.js';
 import { isFreeFigure, buildSpec, buildRenderText } from '../controls/cli-export.js';
@@ -120,6 +120,29 @@ test('valueToT positive-only-guard pushes values into the LUT hot half', () => {
     assert.equal(valueToT(0, 1, 'sequential', 0.5, true), 0.5);
 });
 
+test('valueToT negative-only-guard confines values to the LUT cool half', () => {
+    // a small negative value, no guard: clamps to 0 (collapses to the LUT cool extreme)
+    // with the diverging-on-negative guard, it sits just below the white centre and never on it
+    assert.ok(valueToT(-0.1, 1, 'sequential', 0.5, false, true) < 0.5);
+    assert.ok(valueToT(-0.1, 1, 'sequential', 0.5, false, true) > 0.0);
+    assert.equal(valueToT(0, 1, 'sequential', 0.5, false, true), 0.5);   // zero → white centre
+    assert.equal(valueToT(-1, 1, 'sequential', 0.5, false, true), 0.0);  // most negative → cool extreme
+});
+
+test('deriveMaxAbs: an explicit clim overrides the data-derived fallback', () => {
+    assert.equal(deriveMaxAbs(null, 7), 7);        // no clim -> data fallback
+    assert.equal(deriveMaxAbs(8, 7), 8);           // scalar -> |v|
+    assert.equal(deriveMaxAbs([-3, 5], 7), 5);     // pair -> larger magnitude bound
+    assert.equal(deriveMaxAbs([-9, 2], 7), 9);
+});
+
+test('resolveColormap guards a diverging map on negative-only data', () => {
+    const maps = loadColormaps({ n: 2, maps: { coolwarm: { lut: [[0, 0, 1], [1, 0, 0]], category: 'diverging' } } });
+    const neg = resolveColormap({ colormap: 'coolwarm', colormapMode: 'auto' }, false, maps, true);
+    assert.equal(neg.divergingMapOnNegative, true);
+    assert.equal(neg.divergingMapOnPositive, false);   // negative data must NOT take the positive guard
+});
+
 test('resolveColormap auto-picks sequential for positive data and guards diverging maps', () => {
     const maps = loadColormaps({ n: 2, maps: { coolwarm: { lut: [[0, 0, 1], [1, 0, 0]], category: 'diverging' }, viridis: { lut: [[0, 0, 0], [1, 1, 0]], category: 'sequential' } } });
     const auto = resolveColormap({ colormap: 'auto', colormapMode: 'auto' }, false, maps);
@@ -129,6 +152,15 @@ test('resolveColormap auto-picks sequential for positive data and guards divergi
     assert.equal(forced.divergingMapOnPositive, true);
     // LUT sampling interpolates
     assert.deepEqual(sampleLUT(maps.get('coolwarm'), 0.5), [0.5, 0, 0.5]);
+});
+
+// --- M8: surface-projection visibility (cel-shaded patches OVER the kept glass cortex) ---
+test('visibility: surface mode shows the surface variant, glass cortex stays', () => {
+    const panel = { roles: ['cortex', 'voxel'], hemisphere: 'lh' };
+    const style = { voxel: { representation: 'surface' }, cortexSurface: 'pial' };
+    assert.equal(visible(panel, { role: 'cortex', hemisphere: 'lh', variant: 'pial' }, style), true);   // glass cortex KEPT (signature look)
+    assert.equal(visible(panel, { role: 'voxel', hemisphere: 'lh', variant: 'surface', category: 'lh_cortex' }, style), true);
+    assert.equal(visible(panel, { role: 'voxel', hemisphere: 'lh', variant: 'blocky', category: 'lh_cortex' }, style), false);
 });
 
 // --- config + presets ---
@@ -224,6 +256,53 @@ test('buildRenderText emits --spec + an embedded figure.json for a free figure',
     assert.equal(json.layout.canvas.bgAlpha, 0);
     assert.equal(json.layout.panels[0].rotate.yaw, 25);
     assert.equal(json.render.width, 800);
+});
+
+// --- M2: extended schema (clim/units/surfaceDepth, template kinds, surface representation) ---
+test('DEFAULTS carry the M2 additions with backward-compatible identities', () => {
+    assert.equal(DEFAULTS.template.kind, 'mni');
+    assert.equal(DEFAULTS.style.clim, null);                 // null = derive from data (today's behaviour)
+    assert.equal(DEFAULTS.style.units.cluster, 'voxels');
+    assert.equal(DEFAULTS.style.voxel.surfaceDepth, 6);
+    assert.equal(DEFAULTS.layout.view.s, 1);                 // identity → existing renders unchanged
+});
+
+test('overlayStyle resolves clim/units/surfaceDepth with per-overlay override', () => {
+    const cfg = { style: { clim: null, units: { value: 'stat', cluster: 'voxels' },
+        voxel: { surfaceDepth: 6, representation: 'smooth' },
+        overlays: [{ clim: [0, 8], units: { value: 'z' }, voxel: { representation: 'surface' } }] } };
+    const os = overlayStyle(cfg, 0);
+    assert.deepEqual(os.clim, [0, 8]);                       // per-overlay clim wins
+    assert.equal(os.units.value, 'z');                       // overridden
+    assert.equal(os.units.cluster, 'voxels');                // inherited
+    assert.equal(os.representation, 'surface');
+    assert.equal(os.surfaceDepth, 6);                        // inherited from global voxel
+    assert.equal(overlayStyle(cfg, 1).clim, null);           // absent overlay → global (null)
+});
+
+test('normalizeConfig promotes per-panel zoom/rotate/slice to declared fields', () => {
+    const cfg = normalizeConfig({ layout: { panels: [{ id: 'a', camera: { plane: 'dorsal' }, cell: { row: 0, col: 0 } }] } });
+    assert.equal(cfg.layout.panels[0].zoom, 1);
+    assert.equal(cfg.layout.panels[0].rotate, null);
+    assert.equal(cfg.layout.panels[0].slice, null);
+});
+
+test('validateConfig enforces template.kind, clim shape, representation enum', () => {
+    const base = { template: { kind: 'mni' }, style: {}, layout: { panels: [{ id: 'a', camera: { plane: 'dorsal' }, cell: { row: 0, col: 0 } }] } };
+    assert.equal(validateConfig(base).ok, true);
+    assert.equal(validateConfig({ ...base, template: { kind: 'bogus' } }).ok, false);
+    assert.equal(validateConfig({ ...base, style: { clim: [8, 1] } }).ok, false);     // vmin>vmax
+    assert.equal(validateConfig({ ...base, style: { clim: 8 } }).ok, true);           // scalar ok
+    assert.equal(validateConfig({ ...base, style: { voxel: { representation: 'surface' } } }).ok, true);
+    assert.equal(validateConfig({ ...base, style: { voxel: { representation: 'blobby' } } }).ok, false);
+});
+
+test("template.kind 'none' rejects cortex/anatomy roles + hemisphere split", () => {
+    const noTpl = (content) => validateConfig({ template: { kind: 'none' }, style: {},
+        layout: { panels: [{ id: 'a', camera: { plane: 'dorsal' }, cell: { row: 0, col: 0 }, content }] } });
+    assert.equal(noTpl({ roles: ['voxel'], hemisphere: 'both' }).ok, true);
+    assert.equal(noTpl({ roles: ['cortex', 'voxel'], hemisphere: 'both' }).ok, false);  // shell not allowed
+    assert.equal(noTpl({ roles: ['voxel'], hemisphere: 'lh' }).ok, false);              // no hemi split
 });
 
 test('validateConfig requires exactly one of cell / place', () => {

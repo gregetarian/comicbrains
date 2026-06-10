@@ -12,9 +12,9 @@ import { frameContent, mergeAABB } from '../core/framing.js';
 import { normalize, sub } from '../core/units.js';
 import { cameraBasis } from '../core/cameras.js';
 import { visible } from '../core/visibility.js';
-import { resolveColormap, colorizeValues } from '../core/colormap.js';
+import { resolveColormap, colorizeValues, deriveMaxAbs } from '../core/colormap.js';
 import { overlayStyle } from '../core/config-schema.js';
-import { makeGlassMaterial, makeAnatomyMaterial, makeOpaqueAnatomyMaterial, makeVoxelMaterial, makeSharedVoxelUniforms } from './materials.js';
+import { makeGlassMaterial, makeAnatomyMaterial, makeOpaqueAnatomyMaterial, makeVoxelMaterial, makeSurfaceMaterial, makeSharedVoxelUniforms } from './materials.js';
 import { OutlinePass, makeThresholdDepthMaterial, makePlainDepthMaterial } from './passes.js';
 
 export function createEngine({ renderer, width, height, sceneModel, colormaps, config }) {
@@ -61,14 +61,14 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     const cortexMeshes = sceneModel.meshes.filter((tm) => tm.meta.role === 'cortex').map((tm) => tm.mesh);
 
     // --- per-overlay voxel materials + uniforms (overlay i → layer 1+i) ---
-    const uniforms = [], voxelMats = [];
+    const uniforms = [], voxelMats = [], surfaceMats = [];
     for (let i = 0; i < N; i++) {
         const os = overlayStyle(config, i);
         const u = makeSharedVoxelUniforms({
             positiveOnly: os.positiveOnly,
             voxel: { veil: os.veil, emissive: os.emissive, specular: os.specular, shininess: os.shininess, clusterMin: os.clusterMin },
         });
-        u.uMaxAbs.value = overlays[i].maxAbsValue ?? 1.0;
+        u.uMaxAbs.value = deriveMaxAbs(os.clim, overlays[i].maxAbsValue ?? 1.0);   // clim pins the scale
         u.uThreshold.value = os.threshold ?? overlays[i].threshold ?? 0;
         uniforms.push(u);
         const mat = makeVoxelMaterial({}, u);
@@ -78,6 +78,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         // genuine front/back occlusion at clearly different depths.
         mat.polygonOffset = true; mat.polygonOffsetFactor = 0; mat.polygonOffsetUnits = i * 6;
         voxelMats.push(mat);
+        surfaceMats.push(makeSurfaceMaterial({}, u));   // variant:'surface' meshes (M8) share the uniforms
     }
 
     // --- place meshes, assign materials + layers + shadows ---
@@ -87,7 +88,8 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         else if (tm.meta.role === 'anatomy') { m.material = anatomyMat; m.renderOrder = 5; m.layers.set(0); m.receiveShadow = SH.enabled; }
         else {
             const oi = tm.meta.overlay ?? 0;
-            m.material = voxelMats[oi] || voxelMats[0];
+            const surf = tm.meta.variant === 'surface';
+            m.material = (surf ? surfaceMats[oi] : voxelMats[oi]) || voxelMats[0];
             m.renderOrder = 15; m.layers.set(1 + oi);       // each overlay on its own layer
             m.castShadow = SH.enabled; m.receiveShadow = SH.enabled;
         }
@@ -117,13 +119,15 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         for (let i = 0; i < N; i++) {
             const os = overlayStyle(config, i);
             const div = !!overlays[i].diverging;
-            const { name, mode, divergingMapOnPositive } = resolveColormap(os, div, colormaps);
+            const neg = !!overlays[i].negativeOnly;
+            const { name, mode, divergingMapOnPositive, divergingMapOnNegative } = resolveColormap(os, div, colormaps, neg);
             const cmap = colormaps.get(name) || colormaps.values().next().value;
             if (!cmap) continue;
-            const mAbs = overlays[i].maxAbsValue ?? 1.0;
+            const mAbs = deriveMaxAbs(os.clim, overlays[i].maxAbsValue ?? 1.0);   // clim pins the scale
+            if (uniforms[i]) uniforms[i].uMaxAbs.value = mAbs;                    // keep the uniform in sync (live clim)
             for (const tm of sceneModel.meshes) {
                 if (tm.meta.role !== 'voxel' || (tm.meta.overlay ?? 0) !== i || !tm.values) continue;
-                const lin = colorizeValues(tm.values, cmap, mAbs, mode, os.gamma, divergingMapOnPositive);
+                const lin = colorizeValues(tm.values, cmap, mAbs, mode, os.gamma, divergingMapOnPositive, divergingMapOnNegative);
                 tm.mesh.geometry.attributes.color.copyArray(lin);
                 tm.mesh.geometry.attributes.color.needsUpdate = true;
             }
@@ -613,6 +617,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     function zoomPanel(i, factor) {
         const p = panels[i]; if (!p) return;
         p.zoom = Math.min(8, Math.max(0.25, (p.zoom || 1) * factor));
+        if (p.def) p.def.zoom = p.zoom;   // M3: persist into the config panel so it round-trips through buildSpec
     }
 
     // Scale every outline pass's line width by `f`. Outline width is in device

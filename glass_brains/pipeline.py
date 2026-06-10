@@ -42,8 +42,15 @@ ASEG_CATEGORIES = {
 STRUCTURE_CATEGORIES = ['lh_cortex', 'rh_cortex', 'subcort_l', 'subcort_r',
                         'cereb_l', 'cereb_r', 'brainstem']
 
-# Segmentation volume, loaded once via init_aseg().
-_ASEG = {'data': None, 'affine': None}
+# Segmentation volume + its category tables, loaded once via init_aseg(). The category maps
+# above are the bundled fsaverage defaults; init_aseg overrides them from the sidecar when a
+# custom template's segmentation ships its own (M9), so classification is DATA, not hardcoded.
+_ASEG = {'data': None, 'affine': None, 'categories': None, 'structureCategories': None}
+# Cortical surface (pial verts + faces + curvature + inward offset to the white surface),
+# loaded once via init_cortex() for surface-projection mode (M8). None until loaded.
+_CORTEX = {'lh': None, 'rh': None}
+SURFACE_DEPTH = 6   # samples along the pial->white ribbon (nilearn vol_to_surf 'line' kind)
+
 # Staging for the most recent process_nifti() result (flat buffer list).
 _BUFFERS = []
 
@@ -58,6 +65,54 @@ def init_aseg(gz_bytes, meta_json):
     raw = gzip.decompress(bytes(gz_bytes))
     _ASEG['data'] = np.frombuffer(raw, dtype=np.uint8).reshape(tuple(meta['dims']))
     _ASEG['affine'] = np.asarray(meta['affine'], dtype=float)
+    # Category tables are DATA (a custom seg can drive its own classification, M9); fall back to
+    # the bundled fsaverage tables when the sidecar omits them, so fsaverage stays byte-identical.
+    _ASEG['categories'] = ({int(k): v for k, v in meta['categories'].items()}
+                           if meta.get('categories') else ASEG_CATEGORIES)
+    _ASEG['structureCategories'] = meta.get('structureCategories') or STRUCTURE_CATEGORIES
+
+
+def init_cortex(gz_bytes, meta_json):
+    """Load the cortical-surface sidecar (pial verts/faces/curv + inward offset to white) for
+    surface-projection mode (M8). meta_json is cortex_surface.json (per-hemi byte layout)."""
+    layout = json.loads(meta_json)
+    raw = gzip.decompress(bytes(gz_bytes))
+    for hemi in ('lh', 'rh'):
+        h = layout.get(hemi)
+        if not h:
+            _CORTEX[hemi] = None
+            continue
+        def arr(name, dtype, cols):
+            off, ln = h[name]
+            a = np.frombuffer(raw[off:off + ln], dtype=dtype)
+            return a.reshape(-1, cols) if cols > 1 else a
+        _CORTEX[hemi] = {'verts': arr('pial', np.float32, 3), 'inward': arr('inward', np.float32, 3),
+                         'faces': arr('faces', np.uint32, 3), 'curv': arr('curv', np.float32, 1)}
+
+
+def build_surface_projection(data, overlay_affine, depth=SURFACE_DEPTH):
+    """Project the thresholded volume onto each cortical hemisphere's vertices: average K
+    trilinear samples taken along the inward normal from pial to white (nilearn vol_to_surf
+    'line' kind). Emits the full cortex sheet per hemi (grey where sub-threshold via the
+    surface material's curvature fallback); staged into _BUFFERS after the voxel structures."""
+    inv = np.linalg.inv(overlay_affine)
+    fracs = np.linspace(0.0, 1.0, max(1, depth))
+    out = {}
+    for hemi, C in _CORTEX.items():
+        if C is None:
+            continue
+        verts, inward = C['verts'], C['inward']
+        acc = np.zeros(len(verts), np.float32)
+        for f in fracs:
+            world = verts + f * inward
+            ijk = (inv @ np.column_stack([world, np.ones(len(world))]).T).T[:, :3]
+            acc += ndimage.map_coordinates(data, ijk.T, order=1, mode='constant', cval=0.0).astype(np.float32)
+        vals = (acc / len(fracs)).astype(np.float32)
+        clu = np.zeros(len(vals), np.float32)
+        desc = _stage_mesh(verts.astype(np.float32), C['faces'], vals, clu)
+        desc['crv'] = _stage(np.ascontiguousarray(C['curv'], np.float32), np.float32)[0]
+        out[hemi] = desc
+    return out
 
 
 def load_stat_map(src, filename=None, threshold=2.3):
@@ -83,6 +138,10 @@ def load_stat_map(src, filename=None, threshold=2.3):
         raise ValueError(
             f"Expected a 3D statistical map, got shape {np.asarray(img.dataobj).shape}. "
             "Upload a 3D stat map in MNI152 space (not a 4D timeseries).")
+    # NaN/inf in a masked map mean "no data here" — zero them so they neither mesh nor
+    # poison the colour limit. np.abs(nan) < threshold is False, so without this they would
+    # survive thresholding and make np.percentile(maxAbsValue) NaN, breaking the whole overlay.
+    data[~np.isfinite(data)] = 0.0
     data[np.abs(data) < threshold] = 0.0
     return data, img.affine
 
@@ -142,8 +201,13 @@ def _voxel_mesh(mask, *fields):
             [np.concatenate(f).astype(np.float32) for f in all_fields])
 
 
-def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine):
-    """Classify each non-zero overlay voxel by its aseg brain region."""
+def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine,
+                            categories=None, structure_categories=None):
+    """Classify each non-zero overlay voxel by its aseg brain region. `categories`
+    (label-id -> category) and `structure_categories` (ordered category list) default to the
+    bundled fsaverage tables but may be supplied (custom template, M9)."""
+    categories = categories if categories is not None else ASEG_CATEGORIES
+    structure_categories = structure_categories if structure_categories is not None else STRUCTURE_CATEGORIES
     nz_ijk = np.argwhere(data != 0)
     if len(nz_ijk) == 0:
         return {}
@@ -153,14 +217,30 @@ def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine):
     aseg_ijk = np.round(
         (inv_aseg @ np.column_stack([nz_world, np.ones(len(nz_world))]).T).T[:, :3]
     ).astype(int)
-    masks = {cat: np.zeros(data.shape, dtype=bool) for cat in STRUCTURE_CATEGORIES}
-    for ov_idx, (ai, aj, ak) in zip(nz_ijk, aseg_ijk):
-        if (0 <= ai < aseg_data.shape[0] and 0 <= aj < aseg_data.shape[1]
-                and 0 <= ak < aseg_data.shape[2]):
-            cat = ASEG_CATEGORIES.get(int(aseg_data[ai, aj, ak]))
-            if cat:
-                masks[cat][tuple(ov_idx)] = True
-    return {cat: mask for cat, mask in masks.items() if mask.any()}
+    # Vectorized gather + label->category LUT (replaces the per-voxel Python loop; byte-identical
+    # masks, guarded by tests/test_pipeline_parity). In-bounds voxels get their aseg label; a LUT
+    # maps each label to a structure-category index (-1 = unclassified).
+    shp = np.array(aseg_data.shape)
+    inb = np.all((aseg_ijk >= 0) & (aseg_ijk < shp), axis=1)
+    labels = np.zeros(len(nz_ijk), dtype=np.int64)
+    ii = aseg_ijk[inb]
+    labels[inb] = aseg_data[ii[:, 0], ii[:, 1], ii[:, 2]]
+    cat_index = {cat: i for i, cat in enumerate(structure_categories)}
+    maxlbl = int(max(int(aseg_data.max()), max((int(k) for k in categories), default=0))) + 1
+    lut = np.full(maxlbl, -1, dtype=np.int64)
+    for lbl, cat in categories.items():
+        if 0 <= int(lbl) < maxlbl and cat in cat_index:
+            lut[int(lbl)] = cat_index[cat]
+    cat_of = np.where(inb, lut[np.clip(labels, 0, maxlbl - 1)], -1)
+    masks = {}
+    for cat, ci in cat_index.items():           # structure_categories order (stable buffer staging)
+        sel = cat_of == ci
+        if sel.any():
+            m = np.zeros(data.shape, dtype=bool)
+            v = nz_ijk[sel]
+            m[v[:, 0], v[:, 1], v[:, 2]] = True
+            masks[cat] = m
+    return masks
 
 
 def build_smooth_mesh(mask, signed_data, affine, sigma_mm=1.0, target_mm=0.5,
@@ -228,19 +308,29 @@ def _stage_mesh(verts, faces, values, clusters):
             'nverts': int(verts.shape[0]), 'ntris': nidx // 3}
 
 
-def process_nifti(src, name, threshold=2.3):
+def process_nifti(src, name, threshold=2.3, classify=True, surface=False):
     """Run the full pipeline on a NIfTI (path or bytes). Returns a JSON meta string;
-    geometry arrays are staged in _BUFFERS for retrieval via get_all_buffers()."""
+    geometry arrays are staged in _BUFFERS for retrieval via get_all_buffers().
+
+    classify=True (default) buckets voxels by aseg region. classify=False (or no aseg loaded)
+    is the no-template / volume-only mode (M7): every supra-threshold voxel goes into one
+    'volume' bucket, meshed in the map's own space with no anatomical classification."""
     _BUFFERS.clear()
     data, affine = load_stat_map(src, name, threshold)
     cluster_data = cluster_sizes(data)
 
     aseg_d, aseg_a = _ASEG['data'], _ASEG['affine']
-    cats = classify_overlay_voxels(data, affine, aseg_d, aseg_a)
+    if classify and aseg_d is not None:
+        cats = classify_overlay_voxels(data, affine, aseg_d, aseg_a,
+                                       _ASEG.get('categories'), _ASEG.get('structureCategories'))
+    else:
+        m = data != 0
+        cats = {'volume': m} if m.any() else {}
 
     # global clim + diverging from all categorised voxels
     all_vals = np.concatenate([data[m] for m in cats.values()]) if cats else np.array([0.0])
     diverging = bool(all_vals.min() < 0 and all_vals.max() > 0)
+    negative_only = bool((all_vals < 0).any() and not (all_vals > 0).any())
     abs_vals = np.abs(all_vals[all_vals != 0])
     max_abs = max(float(np.percentile(abs_vals, 99)), 1e-10) if len(abs_vals) else 1.0
 
@@ -269,8 +359,13 @@ def process_nifti(src, name, threshold=2.3):
         'maxAbsValue': max_abs,
         'maxClusterSize': int(cluster_data.max()) if cluster_data.size else 0,
         'diverging': diverging,
+        'negativeOnly': negative_only,
+        'regionCounts': {cat: int(m.sum()) for cat, m in cats.items()},   # M10: supra-threshold voxels per region
         'structures': structures,
     }
+    # Surface-projection meshes (M8): the cortex sheet per hemi, sampled from this volume.
+    if surface and (_CORTEX['lh'] is not None or _CORTEX['rh'] is not None):
+        meta['surface'] = build_surface_projection(data, affine)
     return json.dumps(meta)
 
 

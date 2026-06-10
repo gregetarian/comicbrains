@@ -44,6 +44,13 @@ async function fetchJSON(url, fb) {
     try { const r = await fetch(url); if (!r.ok) throw 0; return await r.json(); }
     catch { return fb; }
 }
+// Headless/CLI render must FAIL LOUDLY: a missing/broken config or colormaps file should
+// surface as window.__GB_ERR__ (which render.py waits on), not silently boot a degraded scene.
+async function fetchJSONStrict(url) {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(`failed to load ${url} (HTTP ${r.status})`);
+    return await r.json();
+}
 const setLoading = (msg, sub) => {
     const el = document.getElementById('loading');
     if (!el) return;
@@ -68,11 +75,14 @@ async function main() {
 
     // Config: ?config=… (render dir, headless) else data/render-config.json (static site).
     const cfgUrl = params.get('config') || (DATA + 'render-config.json');
-    const rc = await fetchJSON(cfgUrl, { preset: 'freeDefault', style: {} });
+    const rc = isHeadless ? await fetchJSONStrict(cfgUrl)
+                          : await fetchJSON(cfgUrl, { preset: 'freeDefault', style: {} });
     preset = params.get('preset') || rc.preset || 'freeDefault';
     config = (rc.layout && !params.get('preset')) ? resolveConfig(rc) : resolveConfig(preset, { style: rc.style || {} });
 
-    colormaps = loadColormaps(await fetchJSON(DATA + 'colormaps.json', { n: 2, maps: {} }));
+    colormaps = loadColormaps(isHeadless ? await fetchJSONStrict(DATA + 'colormaps.json')
+                                         : await fetchJSON(DATA + 'colormaps.json', { n: 2, maps: {} }));
+    if (isHeadless && colormaps.size === 0) throw new Error('colormaps.json contained no colormaps');
     baseScene = await loadBaseScene(DATA);
 
     // preserveDrawingBuffer for the headless screenshot path; CSS-driven pixelRatio interactively.
@@ -102,6 +112,19 @@ async function main() {
         demoBtn.disabled = true;
         loadNeurosynthDemo().catch((e) => { console.warn('demo load failed:', e); demoLoaded = false; demoBtn.disabled = false; });
     });
+    // Onboarding card's demo button + viewer-wide drag-and-drop upload (the card says "drop here").
+    document.getElementById('onboard-demo')?.addEventListener('click', () => {
+        demoBtn.disabled = true;
+        loadNeurosynthDemo().catch((e) => { console.warn('demo load failed:', e); demoLoaded = false; demoBtn.disabled = false; });
+    });
+    const viewerEl = document.getElementById('viewer');
+    ['dragenter', 'dragover'].forEach((ev) => viewerEl.addEventListener(ev, (e) => { e.preventDefault(); viewerEl.classList.add('dragging'); }));
+    viewerEl.addEventListener('dragleave', (e) => { if (e.target === viewerEl) viewerEl.classList.remove('dragging'); });
+    viewerEl.addEventListener('drop', (e) => {
+        e.preventDefault(); viewerEl.classList.remove('dragging');
+        const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.nii(\.gz)?$|\.gz$/i.test(f.name));
+        if (files.length) handleUpload(files);
+    });
     // Minimise/restore the bottom control panel (frees the collapsed height for the brains).
     document.getElementById('c-min').addEventListener('click', () => { document.body.classList.toggle('ctrl-min'); fit(); });
     // Whole-canvas zoom controls (the brains are a fixed size; these reframe the canvas).
@@ -118,7 +141,7 @@ async function main() {
         download: downloadText,
         onApplied: () => {
             engine.applyStyle(); engine.recolor(); engine.applySmoothing();
-            buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay });
+            buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface, onReorder: reorderOverlays });
             syncGlobalControls();
         },
     });
@@ -161,6 +184,10 @@ async function runHeadless() {
     document.documentElement.style.setProperty('--cbstrip', '0px');
     if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (_) {} }
     engine.resize(canvas.clientWidth, canvas.clientHeight);
+    // M3: reproduce a panned/zoomed canvas from the spec. Gated on a non-identity view so the
+    // default (s=1) is a no-op and every existing headless figure stays byte-identical.
+    const lv = config.layout.view;
+    if (lv && lv.s != null && (lv.s !== 1 || lv.cx != null || lv.cy != null)) engine.setView(lv);
     document.getElementById('loading').style.display = 'none';
     for (let i = 0; i < 4; i++) { engine.renderFrame(); colorbar?.update(); }
     requestAnimationFrame(() => {
@@ -195,7 +222,8 @@ async function loadNeurosynthDemo() {
             const { meta, buffers } = await processNifti(new File([blob], ov.file), ov.threshold ?? 2.3,
                 (m) => setLoading(m + ' — ' + (ov.name || ov.file), note));
             if (ov.name) meta.name = ov.name;
-            overlays.push({ meta, meshObjs: buildOverlayMeshes(meta, buffers, overlays.length) });
+            overlays.push({ meta, meshObjs: buildOverlayMeshes(meta, buffers, overlays.length),
+                            src: { file: new File([blob], ov.file), threshold: ov.threshold ?? 2.3 } });
             (config.style.overlays ||= []).push(ov.style || {});
         } catch (e) { console.warn('default overlay failed:', ov.file, e); }
     }
@@ -203,12 +231,42 @@ async function loadNeurosynthDemo() {
     setLoading(null);
 }
 
-/** Build + register one overlay from a (meta, flat-buffers) pair, then rebuild. */
-function addOverlay(meta, buffers) {
+/** Build + register one overlay from a (meta, flat-buffers) pair, then rebuild. `src`
+ *  ({file, threshold}) is kept so the overlay can be re-meshed for surface mode. */
+function addOverlay(meta, buffers, src) {
     const meshObjs = buildOverlayMeshes(meta, buffers, overlays.length);
-    overlays.push({ meta, meshObjs });
+    overlays.push({ meta, meshObjs, src });
     (config.style.overlays ||= []).push({});
     rebuild();
+}
+
+/** Switch overlay i to/from surface-projection mode. Surface geometry is meshed on demand
+ *  (re-runs the pipeline with surface=True, lazy-loading the cortical sidecar) the first time. */
+async function setOverlaySurface(i, repSel) {
+    const o = overlays[i];
+    if (!o) return;
+    try {
+        if (!o.src || !o.src.file) {
+            setLoading('Surface mode needs a re-meshable map (drag a NIfTI in, or use Demo).');
+            setTimeout(() => setLoading(null), 2600);
+            if (repSel) repSel.value = o.meta && o.meta.surface ? 'surface' : 'smooth';
+            return;
+        }
+        if (!o._surfaced) {
+            const { meta, buffers } = await processNifti(o.src.file, o.src.threshold,
+                (m) => setLoading(m, 'First use loads the cortical surface (~11 MB), then re-meshes.'), true);
+            for (const mo of o.meshObjs) mo.mesh.geometry.dispose();
+            o.meta = meta; o.meshObjs = buildOverlayMeshes(meta, buffers, i); o._surfaced = true;
+            setLoading(null);
+        }
+        setOverlayStyle(config, i, { voxel: { representation: 'surface' } });
+        rebuild();
+    } catch (err) {
+        console.error(err);
+        setLoading('Surface projection failed: ' + (err && err.message));
+        setTimeout(() => setLoading(null), 3000);
+        if (repSel) repSel.value = 'smooth';
+    }
 }
 
 /** Process uploaded NIfTI File(s) entirely in-browser (lazy-loads Pyodide). */
@@ -228,7 +286,7 @@ async function handleUpload(files) {
                 await new Promise((r) => setTimeout(r, 2500));
                 continue;
             }
-            addOverlay(meta, buffers);
+            addOverlay(meta, buffers, { file: files[k], threshold: thr });
         }
         setLoading(null);
     } catch (err) {
@@ -245,6 +303,17 @@ function removeOverlay(i) {
     for (const mo of o.meshObjs) mo.mesh.geometry.dispose();
     overlays.splice(i, 1);
     if (config.style.overlays) config.style.overlays.splice(i, 1);
+    rebuild();
+}
+
+/** Move overlay `from` to position `to` (drag-to-reorder). Reorders the overlay AND its style slot
+ *  in parallel; rebuild() re-tags meta.overlay by position, so layer/draw order follows. */
+function reorderOverlays(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= overlays.length || to >= overlays.length) return;
+    const [ov] = overlays.splice(from, 1); overlays.splice(to, 0, ov);
+    const os = (config.style.overlays ||= []);
+    while (os.length < overlays.length) os.push({});
+    const [s] = os.splice(from, 1); os.splice(to, 0, s ?? {});
     rebuild();
 }
 
@@ -331,8 +400,9 @@ function rebuild() {
 
     // Interactive-only chrome (control rows, the Colorbar toggle state, hover zoom buttons).
     if (!isHeadless) {
+        const onb = document.getElementById('onboard'); if (onb) onb.style.display = overlays.length ? 'none' : 'flex';
         const tgl = document.getElementById('c-colorbar'); if (tgl) tgl.classList.toggle('active', colorbarsVisible);
-        buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay });
+        buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface, onReorder: reorderOverlays });
         if (config.layout.mode === 'free') {
             // Free Canvas: the per-panel editor frames replace the hover +/- zoom.
             zoomEls.forEach((el) => el.remove()); zoomEls = [];
@@ -372,7 +442,7 @@ function randomizeColormaps() {
     const used = new Set();
     overlays.forEach((o, i) => { const name = randomColormapName(colormaps, used); used.add(name); setOverlayStyle(config, i, { colormap: name }); });
     engine.recolor();
-    buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay });
+    buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface, onReorder: reorderOverlays });
 }
 
 /** Push config.style's global fields back onto the surface-row controls (after a preset
@@ -489,6 +559,9 @@ function startLoopAndResize() {
 async function copyCliCommand() {
     const btn = document.getElementById('c-cli');
     const label = btn.textContent;
+    // M3: capture the live whole-canvas pan/zoom into the config so buildSpec/figure.json
+    // round-trips it (identity by default → existing figures unchanged).
+    if (engine && engine.getView) { const v = engine.getView(); config.layout.view = { s: v.s, cx: v.cx, cy: v.cy }; }
     const text = buildRenderText({ config, overlays, preset, colormaps, panelZoomUsed });
     const flash = (m) => { btn.textContent = m; setTimeout(() => { btn.textContent = label; }, 1600); };
     console.log(text);
@@ -614,6 +687,11 @@ function saveBars() {
     // If the bars are hidden, build a throwaway one just to composite from.
     const temp = !colorbar;
     const cb = colorbar || createColorbar(container, { engine, config, colormaps });
+    // A hidden session sets body.nobar, which CSS-hides .colorbar — so a throwaway bar would have
+    // ZERO layout size when measured (blank export). Drop nobar for this synchronous measure +
+    // composite, then restore it; no repaint happens mid-function, so the bars never flash on screen.
+    const hadNobar = document.body.classList.contains('nobar');
+    if (hadNobar) document.body.classList.remove('nobar');
     cb.update();
     try {
         const pad = 8;
@@ -630,11 +708,15 @@ function saveBars() {
         downloadPng(out, 'glassbrain_colorbars.png');
     } finally {
         if (temp) cb.el.remove();
+        if (hadNobar) document.body.classList.add('nobar');   // restore the hidden state
         btn.textContent = label;
     }
 }
 
 main().catch((err) => {
     console.error(err);
+    // Signal the headless render harness (render.py waits on __GB_ERR__) so a boot failure
+    // fails the render loudly instead of hanging until the timeout.
+    window.__GB_ERR__ = (err && err.message) || 'viewer failed to start';
     setLoading('Error: ' + (err && err.message));
 });

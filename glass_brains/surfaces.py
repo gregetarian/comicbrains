@@ -39,6 +39,24 @@ def load_hemisphere(surf_dir, hemi):
     return coords, faces, curv
 
 
+def load_surface_file(path):
+    """Load a cortical surface mesh for a custom template (M9): FreeSurfer geometry
+    (lh.pial / lh.white / ...), GIFTI (.gii), or any mesh trimesh reads (.glb/.ply/.obj/.stl).
+    Returns (vertices, faces). Curvature, if any, is supplied separately."""
+    p = str(path)
+    name = Path(p).name.lower()
+    if name.endswith((".gii", ".gii.gz")):
+        g = nib.load(p)
+        pts = g.get_arrays_from_intent("NIFTI_INTENT_POINTSET")[0].data
+        tris = g.get_arrays_from_intent("NIFTI_INTENT_TRIANGLE")[0].data
+        return np.asarray(pts), np.asarray(tris)
+    if any(name.endswith(e) for e in (".glb", ".gltf", ".ply", ".obj", ".stl", ".off")):
+        m = trimesh.load(p, process=False)
+        return np.asarray(m.vertices), np.asarray(m.faces)
+    coords, faces = nib.freesurfer.read_geometry(p)   # FreeSurfer geometry
+    return np.asarray(coords), np.asarray(faces)
+
+
 def mni305_to_mni152(vertices):
     """Transform vertices from MNI305 (fsaverage) to MNI152 space.
 

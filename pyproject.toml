@@ -30,7 +30,7 @@ bake = ["trimesh>=4.0", "mne>=1.5", "cmap>=0.1"]
 # Headless PNG rendering (`glass-brains render`). After install, run:
 #   python -m playwright install chromium
 render = ["playwright>=1.40"]
-dev = ["pytest", "ruff"]
+dev = ["pytest", "pytest-xdist", "Pillow", "ruff"]
 
 [project.scripts]
 glass-brains = "glass_brains.core:cli"
@@ -53,5 +53,5 @@ include = ["glass_brains*"]
 glass_brains = [
     "web/**/*.js", "web/**/*.html", "web/**/*.json", "web/**/*.png", "web/**/*.css",
     "web/**/*.glb", "web/**/*.bin", "web/**/*.gz", "web/**/*.whl",
-    "web/**/*.py", "web/**/*.nii.gz",
+    "web/**/*.py", "web/**/*.nii.gz", "web/**/*.woff", "web/vendor/VERSION",
 ]

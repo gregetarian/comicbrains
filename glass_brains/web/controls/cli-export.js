@@ -6,8 +6,9 @@
  * SAME config schema (core/config-schema.js): render.py just turns flags into that
  * config and runs the identical headless viewer. So every browser style control maps
  * to a flag. The places they can't match are stated as `# note:` comments:
- *   - the CLI renders ONE NIfTI per figure (the browser composites N overlays),
- *   - per-panel zoom has no CLI flag,
+ *   - the CLI composites multiple overlays (pass several NIfTIs, or a --spec figure.json);
+ *     a single Copy-CLI command for multi-overlay GRID figures is still pending (roadmap M5),
+ *   - per-panel zoom has no CLI flag yet,
  *   - the browser never knows the upload's disk path (you supply it).
  */
 import { overlayStyle } from '../core/config-schema.js';
@@ -45,6 +46,10 @@ export function isFreeFigure(config) {
 export function buildSpec(config) {
     const cv = config.layout && config.layout.canvas;
     return {
+        // M3: the ONE figure document. layout carries view{s,cx,cy} + per-panel zoom/rotate/slice
+        // (declared in config-schema DEFAULTS), template records the space, style the full per-overlay
+        // style — so Copy-CLI, --spec, the notebook render_spec, presets, and URL-state never drift.
+        template: config.template,
         layout: config.layout,
         style: config.style,
         render: {
@@ -111,7 +116,7 @@ export function buildRenderText({ config, overlays, preset, colormaps, panelZoom
             '# 1) save the JSON below as figure.json   2) run the command (point it at your NIfTI on disk).',
         ];
         if (overlays.length > 1)
-            notes.push('# note: the CLI renders ONE map per figure — figure.json carries the layout/style; pass your first map.');
+            notes.push('# note: figure.json carries the layout/style for ALL overlays; pass your maps in argument order (the i-th fills style.overlays[i]).');
         const cmd = `glass-brains render ${q(name)} -o glassbrain.png --spec figure.json --crop content`;
         return notes.join('\n') + '\n\n' + cmd + '\n\n# ---- figure.json ----\n' + JSON.stringify(spec, null, 2) + '\n';
     }
@@ -122,8 +127,8 @@ export function buildRenderText({ config, overlays, preset, colormaps, panelZoom
         '# Replace the filename with the path to your NIfTI on disk.',
     ];
     if (overlays.length > 1)
-        notes.push(`# note: ${overlays.length} overlays are shown; the CLI renders ONE map per figure —`,
-                   '#       it cannot composite overlays the way the browser does. One command each below.');
+        notes.push(`# note: ${overlays.length} overlays are shown; render.py composites all maps passed in one call —`,
+                   '#       the per-map commands below each set one colormap (a single composite command lands in roadmap M5).');
     if (panelZoomUsed)
         notes.push('# note: per-panel zoom (the +/- buttons) has no CLI equivalent and is not captured.');
     notes.push('# note: resolution/aspect via --width/--height (default 1600x1000); the browser');

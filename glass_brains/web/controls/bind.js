@@ -111,7 +111,7 @@ function sw(labelText) {
 const btn = (text) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn'; b.textContent = text; return b; };
 
 /** Build one control row per overlay. Re-callable: clears + rebuilds on each engine rebuild. */
-export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
+export function buildOverlayRows({ engine, config, colormaps, onRemove, onSurface, onReorder }) {
     const host = $('overlay-rows'); if (!host) return;
     host.innerHTML = '';
     const overlays = engine.overlays || [];
@@ -120,7 +120,7 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
     const propagateAll = (patch) => {
         for (let k = 0; k < overlays.length; k++) setOverlayStyle(config, k, patch);
         engine.applyStyle(); engine.recolor(); engine.applySmoothing();
-        buildOverlayRows({ engine, config, colormaps, onRemove });
+        buildOverlayRows({ engine, config, colormaps, onRemove, onSurface, onReorder });
     };
     // A per-overlay slider that (with >1 volume) shows a "⇶" to propagate its value to all.
     const ovRange = (el, val, oninput, opts, tip, patch) =>
@@ -159,6 +159,24 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
         rm.addEventListener('click', () => onRemove(i));
         gName.append(nm, eye, rm); row.append(gName);
 
+        // Drag the name to reorder overlays (later overlays composite over earlier). Only the name
+        // is a drag handle, so the row's sliders/selects stay usable. rebuild() re-indexes by position.
+        if (onReorder && overlays.length > 1) {
+            nm.draggable = true; nm.style.cursor = 'grab'; nm.title = (ov.name || '') + ' — drag to reorder';
+            nm.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', String(i)); e.dataTransfer.effectAllowed = 'move';
+                row.classList.add('dragging');
+            });
+            nm.addEventListener('dragend', () => row.classList.remove('dragging'));
+            row.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('drop-target'); });
+            row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+            row.addEventListener('drop', (e) => {
+                e.preventDefault(); row.classList.remove('drop-target');
+                const from = parseInt(e.dataTransfer.getData('text/plain'), 10);
+                if (!Number.isNaN(from)) onReorder(from, i);
+            });
+        }
+
         const g = document.createElement('div'); g.className = 'grp';
 
         // Colormap picker with swatch previews: trigger (name + gradient), a popup of all
@@ -171,9 +189,29 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
         g.append(picker.el);
         infoIcon(picker.el, 'Colormap for this overlay — click for swatches, or step with ‹ ›. Each overlay can use a different one; sequential vs diverging is auto-picked from the data.');
 
-        const smooth = btn('Smooth');
-        bindToggle(smooth, os.representation === 'smooth', (on) => set({ voxel: { representation: on ? 'smooth' : 'blocky' } }), 'Smooth (marching-cubes) vs blocky voxels.');
-        g.append(smooth);
+        // Colour-scale mode (M11 parity: was CLI/notebook-only). Recolour only, no re-mesh.
+        const modeSel = document.createElement('select'); modeSel.className = 'btn';
+        for (const m of ['auto', 'sequential', 'diverging']) {
+            const o = document.createElement('option'); o.value = m; o.textContent = m; modeSel.append(o);
+        }
+        modeSel.value = os.colormapMode || 'auto';
+        modeSel.addEventListener('change', () => { set({ colormapMode: modeSel.value }); engine.recolor(); });
+        g.append(modeSel);
+        infoIcon(modeSel, 'Colour scale: auto (sequential/diverging picked from the data), or force one.');
+
+        // Voxel representation: blocky / smooth / surface (M8 — surface projects onto the cortex,
+        // keeping the cel-shaded glass look; chosen lazily re-meshes via onSurface).
+        const repSel = document.createElement('select'); repSel.className = 'btn';
+        for (const r of ['blocky', 'smooth', 'surface']) {
+            const o = document.createElement('option'); o.value = r; o.textContent = r; repSel.append(o);
+        }
+        repSel.value = os.representation || 'smooth';
+        repSel.addEventListener('change', () => {
+            if (repSel.value === 'surface') { if (onSurface) onSurface(i, repSel); else repSel.value = 'smooth'; }
+            else { set({ voxel: { representation: repSel.value } }); engine.applyStyle(); engine.recolor(); }
+        });
+        g.append(repSel);
+        infoIcon(repSel, 'Voxel representation: blocky, smooth (marching cubes), or surface (project onto the cortex — keeps the glass-brain look).');
 
         const thr = sw('thr');
         ovRange(thr.range, os.threshold ?? ov.threshold ?? 0, (v) => { set({ threshold: v }); engine.applyStyle(); }, { min: 0, max: maxAbs, step: maxAbs / 200 }, 'Statistical threshold — hide |value| below this.', (v) => ({ threshold: v }));
@@ -188,10 +226,24 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove }) {
             set({ voxel: { smoothing: v } });
             // smooth+ only affects the SMOOTH mesh — if the overlay is showing blocky voxels
             // the smoothing would be invisible, so switch it to smooth when the user dials it up.
-            if (v > 0) { set({ voxel: { representation: 'smooth' } }); smooth.classList.add('active'); }
+            if (v > 0) { set({ voxel: { representation: 'smooth' } }); repSel.value = 'smooth'; }
             engine.applySmoothing(i);
         }, { min: 0, max: 20, step: 1 }, 'Extra surface smoothing of the smooth (marching-cubes) mesh — rounds rough cluster surfaces (size-preserving). Auto-switches the overlay to Smooth. 0 = off; most visible on large/irregular blobs.', (v) => ({ voxel: { smoothing: v } }));
         g.append(sm.wrap);
+
+        const gam = sw('gamma');
+        ovRange(gam.range, os.gamma ?? 0.5, (v) => { set({ gamma: v }); engine.recolor(); },
+                { min: 0.2, max: 1.5, step: 0.05 },
+                'Colormap gamma (power-law) — <1 lifts low values (0.5 = sqrt).', (v) => ({ gamma: v }));
+        g.append(gam.wrap);
+
+        // Colour limit (M11 parity: was CLI/notebook-only). Scalar vmax; 0 = auto (data-derived).
+        // recolor re-bakes the vertex colours + syncs uMaxAbs, so it tracks live.
+        const cl = sw('clim');
+        ovRange(cl.range, typeof os.clim === 'number' ? os.clim : 0, (v) => { set({ clim: v > 0 ? v : null }); engine.recolor(); },
+                { min: 0, max: maxAbs * 2, step: Math.max(maxAbs / 100, 0.01) },
+                'Colour limit (vmax) — pins the scale so panels share one. 0 = auto.', (v) => ({ clim: v > 0 ? v : null }));
+        g.append(cl.wrap);
 
         const pos = btn('+only');
         bindToggle(pos, !!os.positiveOnly, (on) => { set({ positiveOnly: on }); engine.applyStyle(); }, 'Show only positive values.');

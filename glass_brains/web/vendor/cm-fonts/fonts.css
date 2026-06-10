@@ -1,0 +1,10 @@
+/* Vendored Computer Modern Serif (regular) for the colorbar ticks — offline, no CDN.
+   Source: cm-web-fonts (github.com/aaaakshat/cm-web-fonts), font/Serif/cmunrm.woff.
+   Only the regular weight is used (colorbar tick labels); bold/italic fall back to serif. */
+@font-face {
+    font-family: 'Computer Modern Serif';
+    src: url('./cmunrm.woff') format('woff');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}

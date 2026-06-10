@@ -99,6 +99,16 @@ const newPanelId = () => `fc${++_uid}`;
 
 export function createFreeCanvasEditor({ container, canvas, config, getEngine, onStructureChange, onBgAlpha }) {
     let frames = [];
+    // The "active" panel is the one you last pressed; it STAYS lifted + interactive until you
+    // press another, so reaching for its resize corner (which overhangs into a neighbour) can't
+    // be stolen by whatever the cursor grazes en route. Hover only lifts to 200; active wins at 250.
+    let activeId = null;
+    function setActive(id) {
+        if (activeId === id) return;
+        activeId = id;
+        for (const fr of frames) fr.el.classList.toggle('fc-active', fr.panel.id === id);
+        reposition();
+    }
     let snap = true;                                 // snap move/resize to a fine px grid
     let snapPx = SNAP_DEFAULT_PX;                     // snap step (CSS px); user-adjustable
     const gridOverlay = el('div', 'fc-gridlines');   // faint grid shown while snapping
@@ -254,6 +264,7 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
         dragResize(resize, panel);
         dragSlice(anchorH, panel, 'anchor');
         dragSlice(sizeH, panel, 'size');
+        if (panel.id === activeId) f.classList.add('fc-active');   // survive rebuilds (refresh recreates frames)
         return { el: f, panel, anchorH, sizeH };
     }
 
@@ -300,6 +311,8 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
             e.preventDefault(); e.stopPropagation();
             handle.setPointerCapture(e.pointerId);
             const fr = handle.closest('.fc-frame');
+            const rec = frames.find((r) => r.el === fr);
+            if (rec) setActive(rec.panel.id);          // sticky-activate the panel being pressed
             if (fr) fr.classList.add('fc-editing');   // keep chrome shown during the drag
             const x0 = e.clientX, y0 = e.clientY, ctx = onStart(e);
             const move = (ev) => onMove(ctx, ev.clientX - x0, ev.clientY - y0);
@@ -377,8 +390,10 @@ export function createFreeCanvasEditor({ container, canvas, config, getEngine, o
             // Stack frames by paint order (place.z); LIFT the hovered/editing one well above
             // the rest so its header/handles stay clickable even where panels overlap.
             const z = (fr.panel.place && fr.panel.place.z != null) ? fr.panel.place.z : i;
+            const active = fr.el.classList.contains('fc-active');
             const lifted = fr.el.classList.contains('hover') || fr.el.classList.contains('fc-editing');
-            fr.el.style.zIndex = lifted ? 200 : (14 + z);
+            // active (250) > hover/editing (200) > base (14+z); 250 stays below the toolbar (300).
+            fr.el.style.zIndex = active ? 250 : (lifted ? 200 : (14 + z));
             updateSliceHandles(fr);
         });
     }

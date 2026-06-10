@@ -1,0 +1,7 @@
+three=0.170.0
+cm-fonts=aaaakshat/cm-web-fonts (Serif/cmunrm.woff)
+
+Vendored offline so renders are deterministic and need no CDN (the headless render
+no longer waits on jsDelivr or document.fonts over the network). The `three` line MUST
+match the version in glass_brains/web/index.html's importmap — tests/test_vendor_sync.py
+asserts this.

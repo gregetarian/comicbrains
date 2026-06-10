@@ -1,6 +1,9 @@
-"""Basic glass brain — load fsaverage and open in browser."""
+"""Basic glass brain — serve the interactive viewer locally.
 
-from glass_brains import GlassBrain
+Drop a NIfTI into the browser to render it (processed in-browser via Pyodide, no backend).
+`GlassBrain` itself is the bake-only template loader; display config lives in the viewer.
+"""
 
-gb = GlassBrain()
-gb.show()
+from glass_brains import open_viewer
+
+open_viewer()

@@ -8,6 +8,10 @@
 
 export const DEFAULTS = {
     version: '2.0',
+    // Template / space (M2). 'mni' = the bundled fsaverage; 'custom' = a user template dir
+    // (M9); 'none' = render the volume in its own space with no anatomical shell (M7). The
+    // baked scene.json.templateMode mirrors this and gates the view vocabulary.
+    template: { kind: 'mni', dir: null, space: 'MNI152' },   // kind: 'mni' | 'custom' | 'none'
     data: { manifest: 'scene.json', colormaps: 'colormaps.json' },
     render: {
         width: 1600, height: 1200, pixelRatio: 2, background: '#ffffff',
@@ -22,17 +26,25 @@ export const DEFAULTS = {
         threshold: null,          // null = use manifest threshold
         positiveOnly: false,
         gamma: 0.5,
+        // Colour limit (M2): null = derive from data (meta.maxAbsValue, the 99th pct). A
+        // [vmin,vmax] pair sets it explicitly; a bare scalar v means symmetric [-v,v] when the
+        // resolved mode is diverging, else [0,v]. Per-overlay override via overlays[i].clim.
+        clim: null,
+        // Units (M2): how thresholds / clim / cluster sizes read. value = the stat shown on the
+        // colorbar ('stat' | 'z' | 't' | ...); cluster = 'voxels' (default) or 'mm3'.
+        units: { value: 'stat', cluster: 'voxels' },
         // Global framing tightness: <1 packs brains closer (driver view fills its
         // cell at this fraction). 0.95 = snug; 1.0 = no padding; 1.06 = old roomy.
         margin: 0.95,
         cortexSurface: 'inflated', // 'pial' | 'inflated'
         voxel: {
-            representation: 'smooth', // 'blocky' (voxelwise) | 'smooth'
+            representation: 'smooth', // 'blocky' (voxelwise) | 'smooth' | 'surface' (project onto the cortex, M8)
             clusterMin: 105,          // cluster-extent threshold: hide clusters < N voxels
             smoothing: 0,             // extra Taubin smoothing iterations on the 'smooth' (0.5mm-grid) mesh; 0 = off
             shininess: 200,
             specular: 0.0,   // light-independent glint amount (slider 0..0.6); off = flat matte
             emissive: 1.0,   // full flat colormap colour (scene lights are 0 by default)
+            surfaceDepth: 6, // M2: K depth samples pial->white when representation === 'surface' (M8)
             veil: { strength: 0.66, k: 7.4, color: '#ffffff' },
             edges: { enabled: true, color: '#808080', opacity: 1.0, width: 1.9, threshold: 0.003 },
         },
@@ -64,6 +76,9 @@ export const DEFAULTS = {
         // were authored against (so the CLI reproduces identical RELATIVE geometry at
         // any --width/--height); bgAlpha 0..1 is the canvas background opacity (1 = opaque).
         canvas: { w: 1600, h: 1000, bgAlpha: 1 },
+        // Whole-canvas pan/zoom (M2). Identity by default so every existing grid render is
+        // byte-identical (headless pins s=1); round-trips through buildSpec for Copy-CLI/--spec.
+        view: { s: 1, cx: null, cy: null },
         panels: [],
     },
 };
@@ -86,12 +101,15 @@ export function overlayStyle(config, i = 0) {
         threshold: o.threshold ?? s.threshold,
         positiveOnly: o.positiveOnly ?? s.positiveOnly,
         gamma: o.gamma ?? s.gamma,
+        clim: o.clim ?? s.clim,
+        units: { ...(s.units || {}), ...(o.units || {}) },
         representation: ov.representation ?? v.representation,
         clusterMin: ov.clusterMin ?? v.clusterMin,
         smoothing: ov.smoothing ?? v.smoothing,
         shininess: ov.shininess ?? v.shininess,
         specular: ov.specular ?? v.specular,
         emissive: ov.emissive ?? v.emissive,
+        surfaceDepth: ov.surfaceDepth ?? v.surfaceDepth,
         veil: { ...(v.veil || {}), ...(ov.veil || {}) },
         edges: { ...(v.edges || {}), ...(ov.edges || {}) },
     };
@@ -117,9 +135,26 @@ export function deepMerge(base, src) {
 
 const ROLES = new Set(['cortex', 'anatomy', 'voxel']);
 const HEMI = new Set(['lh', 'rh', 'both']);
+const REPRESENTATIONS = new Set(['blocky', 'smooth', 'surface']);   // M2 (+ 'surface' for M8)
+const TEMPLATE_KINDS = new Set(['mni', 'custom', 'none']);          // M2
+
+// clim: null | a single number | a [vmin, vmax] pair with vmin < vmax.
+const climOk = (c) => c == null || typeof c === 'number'
+    || (Array.isArray(c) && c.length === 2 && typeof c[0] === 'number' && typeof c[1] === 'number' && c[0] < c[1]);
+const repOk = (r) => r == null || REPRESENTATIONS.has(r);
 
 export function validateConfig(cfg) {
     const errors = [];
+    const kind = cfg.template?.kind ?? 'mni';
+    if (!TEMPLATE_KINDS.has(kind)) errors.push(`template.kind must be one of ${[...TEMPLATE_KINDS].join('/')}, got '${kind}'`);
+    const noTemplate = kind === 'none';
+    if (!climOk(cfg.style?.clim)) errors.push('style.clim must be null, a number, or [vmin, vmax] with vmin < vmax');
+    if (!repOk(cfg.style?.voxel?.representation)) errors.push(`style.voxel.representation must be one of ${[...REPRESENTATIONS].join('/')}`);
+    (cfg.style?.overlays || []).forEach((o, i) => {
+        if (!o) return;
+        if (!climOk(o.clim)) errors.push(`style.overlays[${i}].clim invalid (null | number | [vmin<vmax])`);
+        if (!repOk(o.voxel?.representation)) errors.push(`style.overlays[${i}].voxel.representation invalid`);
+    });
     const panels = cfg.layout?.panels || [];
     if (!Array.isArray(panels) || panels.length === 0) errors.push('layout.panels must be a non-empty array');
     panels.forEach((p, i) => {
@@ -133,6 +168,14 @@ export function validateConfig(cfg) {
         const content = p.content || {};
         (content.roles || []).forEach((r) => { if (!ROLES.has(r)) errors.push(`panel ${p.id}: bad role '${r}'`); });
         if (content.hemisphere && !HEMI.has(content.hemisphere)) errors.push(`panel ${p.id}: bad hemisphere '${content.hemisphere}'`);
+        if (!repOk(content.representation)) errors.push(`panel ${p.id}: bad representation '${content.representation}'`);
+        // 'none' mode has no shell and no hemisphere split: reject cortex/anatomy roles and L/R-only views.
+        if (noTemplate) {
+            if ((content.roles || []).some((r) => r === 'cortex' || r === 'anatomy'))
+                errors.push(`panel ${p.id}: template.kind 'none' has no cortex/anatomy shell — use roles ['voxel']`);
+            if (content.hemisphere === 'lh' || content.hemisphere === 'rh')
+                errors.push(`panel ${p.id}: template.kind 'none' has no hemisphere split — use hemisphere 'both'`);
+        }
     });
     return { ok: errors.length === 0, errors };
 }
@@ -143,6 +186,9 @@ export function normalizeConfig(raw = {}) {
     cfg.layout.panels = (cfg.layout.panels || []).map((p) => ({
         rowSpan: 1, colSpan: 1,
         anatomyOpacity: null,
+        // M2: declared per-panel fields the engine already reads — now defaulted so they
+        // round-trip losslessly through buildSpec (identity values change no render).
+        zoom: 1, rotate: null, slice: null,
         framing: { margin: 1.06, fit: 'auto' },
         ...p,
         content: { roles: ['cortex', 'voxel'], hemisphere: 'both', categories: null, representation: null, anatomyStyle: 'glass', anatomyHemisphere: null, ...(p.content || {}) },

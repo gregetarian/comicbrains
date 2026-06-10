@@ -1,18 +1,23 @@
-"""Glass brain with a statistical overlay.
+"""Render a statistical overlay to a figure (needs the `[render]` extra + Chromium).
 
-Interactive viewer, plus how to render the same data to a PNG headlessly.
-Replace the path with your own z/t-stat NIfTI (MNI152 space).
+Replace the path with your own z/t-stat NIfTI in MNI152 space. In a Jupyter / VSCode
+interactive notebook, `fig` displays inline. For the interactive viewer instead, call
+open_viewer() and drag the NIfTI into the browser.
 """
+import glass_brains as gb
 
-from glass_brains import GlassBrain
+fig = gb.render(
+    "your_stat_map.nii.gz",
+    views=["left_lateral", "right_lateral", "left_medial", "right_medial"],
+    grid="2x2", threshold=2.3, cmap="YlGnBu",
+)
+fig.save("figure.png")   # in a notebook, just evaluate `fig` to show it inline
 
-gb = GlassBrain()
-gb.add_overlay("your_stat_map.nii.gz", threshold=2.3)
-gb.show()                      # build assets, serve, open the browser
-
-# Headless figure straight to PNG (needs the `render` extra + chromium):
-#   from glass_brains.render import build_layout, render_to_png
-#   render_to_png(
-#       "your_stat_map.nii.gz", "figure.png",
-#       layout=build_layout("2x2", ["left_lateral", "right_lateral", "axial", "frontal"]),
-#   )
+# Several maps, each its own colormap (scalar = same for all; list = one per overlay):
+#   gb.render(["faces.nii.gz", "language.nii.gz"], cmap=["Reds", "YlGnBu"], threshold=[4.0, 2.3])
+#
+# Reproduce a browser Copy-CLI figure.json exactly:
+#   gb.render_spec("figure.json", ["faces.nii.gz", "language.nii.gz"])
+#
+# Interactive viewer (drag the NIfTI into the browser):
+#   gb.open_viewer()

@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <title>comicbrains — in-browser glass brain</title>
-  <!-- Computer Modern (LaTeX roman) web font for the colorbar ticks; falls back to serif if offline. -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/aaaakshat/cm-web-fonts@latest/fonts.css">
+  <!-- Computer Modern (LaTeX roman) web font for the colorbar ticks — vendored offline (web/vendor/). -->
+  <link rel="stylesheet" href="./vendor/cm-fonts/fonts.css">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { width: 100%; height: 100%; }
@@ -48,6 +48,7 @@
     .cbar-name { font-size: 9px; color: #555; text-align: center; line-height: 1; }
     .colorbar canvas { position: static; border: 1px solid #d0d0d0; display: block; }
     .colorbar-labels { display: flex; flex-direction: row; justify-content: space-between; font-size: 9px; color: #777; line-height: 1; }
+    .cbar-units { font-size: 9px; color: #555; text-align: center; line-height: 1.2; margin-top: 1px; }
     body.nobar .colorbar { display: none; }
 
     .kapow-toggle { position: absolute; top: 8px; right: 12px; z-index: 20; display: flex; align-items: center; gap: 5px;
@@ -83,10 +84,11 @@
     .fc-frame { position: absolute; border: 1.5px solid transparent; border-radius: 4px; z-index: 14;
       pointer-events: none; transition: border-color 0.12s; }
     .fc-frame.hover, .fc-frame.fc-editing { border-color: rgba(74,144,217,0.85); box-shadow: 0 0 0 1px rgba(255,255,255,0.5); }
+    .fc-frame.fc-active { border-color: rgba(74,144,217,0.95); box-shadow: 0 0 0 1px rgba(255,255,255,0.6); }
     .fc-frame .fc-head, .fc-frame .fc-resize, .fc-frame .fc-slice-handle { opacity: 0; transition: opacity 0.12s; }
-    .fc-frame.hover .fc-head, .fc-frame.fc-editing .fc-head,
-    .fc-frame.hover .fc-resize, .fc-frame.fc-editing .fc-resize,
-    .fc-frame.hover .fc-slice-handle, .fc-frame.fc-editing .fc-slice-handle { opacity: 1; }
+    .fc-frame.hover .fc-head, .fc-frame.fc-editing .fc-head, .fc-frame.fc-active .fc-head,
+    .fc-frame.hover .fc-resize, .fc-frame.fc-editing .fc-resize, .fc-frame.fc-active .fc-resize,
+    .fc-frame.hover .fc-slice-handle, .fc-frame.fc-editing .fc-slice-handle, .fc-frame.fc-active .fc-slice-handle { opacity: 1; }
     .fc-frame .fc-body { position: absolute; inset: 0; pointer-events: auto; cursor: move; } /* drag=move; shift+drag=orbit */
     .fc-frame .fc-head { position: absolute; left: -1px; top: -1px; display: flex; gap: 2px; align-items: center; padding: 2px 4px;
       background: rgba(255,255,255,0.94); border: 1px solid #cdddee; border-radius: 4px 0 4px 0; pointer-events: auto; cursor: grab;
@@ -96,7 +98,7 @@
       border: 1px solid #ccc; border-radius: 3px; background: #fff; color: #555; cursor: pointer; }
     .fc-frame .fc-head button:hover { background: #f0f0f0; border-color: #999; }
     .fc-frame .fc-head button.on { background: #4a90d9; color: #fff; border-color: #4a90d9; }
-    .fc-frame .fc-resize { position: absolute; right: -6px; bottom: -6px; width: 14px; height: 14px; background: #4a90d9;
+    .fc-frame .fc-resize { position: absolute; right: -8px; bottom: -8px; width: 18px; height: 18px; background: #4a90d9;
       border: 2px solid #fff; border-radius: 3px; pointer-events: auto; cursor: nwse-resize; }
     /* slice handles: anchor (orange) = move the cut · size (teal) = radius/extent.
        margin centres the 13px dot on its world point; display toggled by the editor. */
@@ -172,6 +174,16 @@
     .preset-filerow .btn { flex: 1; text-align: center; }
     .preset-list { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto; scrollbar-width: thin; }
     .preset-empty { font-size: 11px; color: #999; padding: 4px 2px; }
+    /* Empty-state onboarding + viewer-wide drag-and-drop */
+    #onboard { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 5; }
+    #onboard .onboard-card { pointer-events: auto; text-align: center; display: flex; flex-direction: column; gap: 8px;
+        padding: 22px 28px; border: 2px dashed #cfcfcf; border-radius: 12px; background: rgba(255,255,255,0.74); color: #555; max-width: 340px; }
+    #onboard .onboard-card strong { font-size: 15px; color: #333; }
+    #onboard .onboard-card span { font-size: 12px; line-height: 1.4; }
+    #onboard .onboard-card .btn { align-self: center; }
+    #viewer.dragging { outline: 3px dashed #88aabb; outline-offset: -6px; }
+    .overlay-row.drop-target { outline: 2px dashed #88aabb; outline-offset: -2px; }
+    .overlay-row.dragging { opacity: 0.5; }
     .preset-row { display: flex; gap: 4px; align-items: center; }
     .preset-apply { flex: 1; text-align: left; font-size: 11px; padding: 4px 7px; border: 1px solid #ddd;
       border-radius: 3px; background: #fafafa; color: #444; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -186,6 +198,11 @@
   <div id="viewer">
     <div class="title">comicbrains <span>· in-browser glass brain</span></div>
     <div id="loading">Loading brain…</div>
+    <div id="onboard"><div class="onboard-card">
+      <strong>Drop a NIfTI here</strong>
+      <span>a 3D stat map in MNI152 space — meshed in your browser, nothing leaves your machine</span>
+      <button class="btn" id="onboard-demo">or load the demo maps</button>
+    </div></div>
     <canvas id="canvas"></canvas>
     <label class="kapow-toggle" title="Comic SFX: a 50% chance a 'BOOM!' pops where you click."><input type="checkbox" id="c-kapow" checked> Kapow</label>
   </div>
@@ -234,11 +251,13 @@
     <!-- One row per overlay, generated by bind.js -->
     <div id="overlay-rows"></div>
   </div>
+  <!-- three.js r170 vendored offline under web/vendor/ (no CDN; renders are deterministic).
+       Keep this version in lockstep with web/vendor/VERSION — tests/test_vendor_sync.py checks it. -->
   <script type="importmap">
   {
     "imports": {
-      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
-      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+      "three": "./vendor/three/0.170.0/three.module.js",
+      "three/addons/": "./vendor/three/0.170.0/addons/"
     }
   }
   </script>

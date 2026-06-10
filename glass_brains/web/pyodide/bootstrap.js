@@ -13,7 +13,8 @@ const PYODIDE_VERSION = '0.29.4';
 const PYODIDE_CDN = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const DATA = 'data/';
 
-let _ready = null;   // memoised init promise (load runtime + packages + aseg + pipeline)
+let _ready = null;      // memoised init promise (load runtime + packages + aseg + pipeline)
+let _cortexReady = null; // memoised cortical-surface load (lazy: only when surface mode is used)
 
 /** Load Pyodide, the package stack, the pipeline module, and the aseg volume — once. */
 export function ensurePyodide(onProgress = () => {}) {
@@ -51,16 +52,33 @@ export function ensurePyodide(onProgress = () => {}) {
     return _ready;
 }
 
+/** Load the cortical-surface sidecar into the pipeline — lazily, only when surface mode is first
+ *  used (it is ~11 MB, so we don't pay it on boot or for volume-only sessions). */
+export async function ensureCortex(onProgress = () => {}) {
+    const { pipeline } = await ensurePyodide(onProgress);
+    if (!_cortexReady) {
+        _cortexReady = (async () => {
+            onProgress('Loading cortical surface…');
+            const json = await fetch(DATA + 'cortex_surface.json').then((r) => r.text());
+            const gz = new Uint8Array(await fetch(DATA + 'cortex_surface.bin.gz').then((r) => r.arrayBuffer()));
+            pipeline.init_cortex(gz, json);
+        })();
+    }
+    return _cortexReady;
+}
+
 /**
  * Process one uploaded NIfTI File entirely in the browser.
+ * @param {boolean} surface — also project onto the cortical surface (loads the sidecar on demand).
  * @returns {{ meta: object, buffers: Uint8Array[] }} — meta references buffer indices
  *   for each structure/variant; asset-loader.buildOverlayMeshes turns them into meshes.
  */
-export async function processNifti(file, threshold = 2.3, onProgress = () => {}) {
+export async function processNifti(file, threshold = 2.3, onProgress = () => {}, surface = false) {
     const { pipeline } = await ensurePyodide(onProgress);
+    if (surface) await ensureCortex(onProgress);
     onProgress('Processing ' + file.name + '…');
     const bytes = new Uint8Array(await file.arrayBuffer());
-    const metaStr = pipeline.process_nifti(bytes, file.name, threshold);
+    const metaStr = pipeline.process_nifti(bytes, file.name, threshold, true, surface);
     const meta = JSON.parse(metaStr);
     const proxy = pipeline.get_all_buffers();
     const buffers = proxy.toJs();   // [Uint8Array, ...] — one copy out of WASM memory
