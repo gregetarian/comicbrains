@@ -219,6 +219,14 @@ export function buildOverlayRows({ engine, config, colormaps, onRemove, onSurfac
                 'Colormap gamma (power-law) — <1 lifts low values (0.5 = sqrt).', (v) => ({ gamma: v }));
         g.append(gam.wrap);
 
+        // Colour limit (M11 parity: was CLI/notebook-only). Scalar vmax; 0 = auto (data-derived).
+        // recolor re-bakes the vertex colours + syncs uMaxAbs, so it tracks live.
+        const cl = sw('clim');
+        ovRange(cl.range, typeof os.clim === 'number' ? os.clim : 0, (v) => { set({ clim: v > 0 ? v : null }); engine.recolor(); },
+                { min: 0, max: maxAbs * 2, step: Math.max(maxAbs / 100, 0.01) },
+                'Colour limit (vmax) — pins the scale so panels share one. 0 = auto.', (v) => ({ clim: v > 0 ? v : null }));
+        g.append(cl.wrap);
+
         const pos = btn('+only');
         bindToggle(pos, !!os.positiveOnly, (on) => { set({ positiveOnly: on }); engine.applyStyle(); }, 'Show only positive values.');
         g.append(pos);

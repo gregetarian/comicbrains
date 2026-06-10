@@ -112,6 +112,19 @@ async function main() {
         demoBtn.disabled = true;
         loadNeurosynthDemo().catch((e) => { console.warn('demo load failed:', e); demoLoaded = false; demoBtn.disabled = false; });
     });
+    // Onboarding card's demo button + viewer-wide drag-and-drop upload (the card says "drop here").
+    document.getElementById('onboard-demo')?.addEventListener('click', () => {
+        demoBtn.disabled = true;
+        loadNeurosynthDemo().catch((e) => { console.warn('demo load failed:', e); demoLoaded = false; demoBtn.disabled = false; });
+    });
+    const viewerEl = document.getElementById('viewer');
+    ['dragenter', 'dragover'].forEach((ev) => viewerEl.addEventListener(ev, (e) => { e.preventDefault(); viewerEl.classList.add('dragging'); }));
+    viewerEl.addEventListener('dragleave', (e) => { if (e.target === viewerEl) viewerEl.classList.remove('dragging'); });
+    viewerEl.addEventListener('drop', (e) => {
+        e.preventDefault(); viewerEl.classList.remove('dragging');
+        const files = [...(e.dataTransfer?.files || [])].filter((f) => /\.nii(\.gz)?$|\.gz$/i.test(f.name));
+        if (files.length) handleUpload(files);
+    });
     // Minimise/restore the bottom control panel (frees the collapsed height for the brains).
     document.getElementById('c-min').addEventListener('click', () => { document.body.classList.toggle('ctrl-min'); fit(); });
     // Whole-canvas zoom controls (the brains are a fixed size; these reframe the canvas).
@@ -376,6 +389,7 @@ function rebuild() {
 
     // Interactive-only chrome (control rows, the Colorbar toggle state, hover zoom buttons).
     if (!isHeadless) {
+        const onb = document.getElementById('onboard'); if (onb) onb.style.display = overlays.length ? 'none' : 'flex';
         const tgl = document.getElementById('c-colorbar'); if (tgl) tgl.classList.toggle('active', colorbarsVisible);
         buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface });
         if (config.layout.mode === 'free') {
@@ -662,6 +676,11 @@ function saveBars() {
     // If the bars are hidden, build a throwaway one just to composite from.
     const temp = !colorbar;
     const cb = colorbar || createColorbar(container, { engine, config, colormaps });
+    // A hidden session sets body.nobar, which CSS-hides .colorbar — so a throwaway bar would have
+    // ZERO layout size when measured (blank export). Drop nobar for this synchronous measure +
+    // composite, then restore it; no repaint happens mid-function, so the bars never flash on screen.
+    const hadNobar = document.body.classList.contains('nobar');
+    if (hadNobar) document.body.classList.remove('nobar');
     cb.update();
     try {
         const pad = 8;
@@ -678,6 +697,7 @@ function saveBars() {
         downloadPng(out, 'glassbrain_colorbars.png');
     } finally {
         if (temp) cb.el.remove();
+        if (hadNobar) document.body.classList.add('nobar');   // restore the hidden state
         btn.textContent = label;
     }
 }

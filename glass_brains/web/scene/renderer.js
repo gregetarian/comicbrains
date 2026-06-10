@@ -124,6 +124,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
             const cmap = colormaps.get(name) || colormaps.values().next().value;
             if (!cmap) continue;
             const mAbs = deriveMaxAbs(os.clim, overlays[i].maxAbsValue ?? 1.0);   // clim pins the scale
+            if (uniforms[i]) uniforms[i].uMaxAbs.value = mAbs;                    // keep the uniform in sync (live clim)
             for (const tm of sceneModel.meshes) {
                 if (tm.meta.role !== 'voxel' || (tm.meta.overlay ?? 0) !== i || !tm.values) continue;
                 const lin = colorizeValues(tm.values, cmap, mAbs, mode, os.gamma, divergingMapOnPositive, divergingMapOnNegative);
