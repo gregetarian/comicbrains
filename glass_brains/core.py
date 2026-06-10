@@ -6,8 +6,8 @@ import json
 import numpy as np
 from pathlib import Path
 
-from .surfaces import load_template_surfaces
-from .subcortical import extract_all_subcortical, LABEL_COLORS
+# NOTE: surfaces/subcortical (which import trimesh + mne) are imported LAZILY inside GlassBrain
+# so `import glass_brains` and the [render]/notebook paths do NOT require the [bake] extra.
 
 WEB_DIR = Path(__file__).parent / 'web'   # the single static viewer (served by `open`)
 
@@ -76,6 +76,8 @@ class GlassBrain:
     Display config (colormap, layout, cluster threshold) lives in the viewer
     (config-schema.js / render-config.json), not here."""
     def __init__(self, template='fsaverage', space='MNI152', include_subcortical=True):
+        from .surfaces import load_template_surfaces            # lazy: needs the [bake] extra
+        from .subcortical import extract_all_subcortical, LABEL_COLORS
         self.template = template
         self.space = space
         self.surfaces = load_template_surfaces(template, space)
@@ -200,6 +202,8 @@ def cli():
     r.add_argument('--frames', type=int, default=24, help='number of orbit frames (with --orbit)')
     r.add_argument('--fps', type=int, default=12, help='GIF frames per second (with --orbit --gif)')
     r.add_argument('--gif', action='store_true', help='assemble the orbit frames into a GIF (needs imageio)')
+    r.add_argument('--regions', default=None,
+                   help='also write a per-region supra-threshold voxel-count CSV to this path')
 
     args = parser.parse_args()
 
@@ -336,6 +340,17 @@ def cli():
             render_to_png(args.nifti, args.out, colorbar=args.colorbar,
                           colorbar_font=args.colorbar_font, colorbar_fontsize=args.colorbar_fontsize,
                           **common)
+
+        if args.regions:                            # per-region voxel-count CSV (M10)
+            import csv
+            from .render import region_report
+            with open(args.regions, 'w', newline='') as f:
+                w = csv.writer(f); w.writerow(['overlay', 'region', 'voxels'])
+                for i, nif in enumerate(args.nifti):
+                    thr = thresholds[i] if isinstance(thresholds, list) else thresholds
+                    for cat, n in region_report(nif, thr, template_dir=args.template).items():
+                        w.writerow([Path(nif).name, cat, n])
+            print('Wrote region report ->', args.regions)
 
     else:
         parser.print_help()

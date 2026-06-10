@@ -217,14 +217,30 @@ def classify_overlay_voxels(data, overlay_affine, aseg_data, aseg_affine,
     aseg_ijk = np.round(
         (inv_aseg @ np.column_stack([nz_world, np.ones(len(nz_world))]).T).T[:, :3]
     ).astype(int)
-    masks = {cat: np.zeros(data.shape, dtype=bool) for cat in structure_categories}
-    for ov_idx, (ai, aj, ak) in zip(nz_ijk, aseg_ijk):
-        if (0 <= ai < aseg_data.shape[0] and 0 <= aj < aseg_data.shape[1]
-                and 0 <= ak < aseg_data.shape[2]):
-            cat = categories.get(int(aseg_data[ai, aj, ak]))
-            if cat:
-                masks[cat][tuple(ov_idx)] = True
-    return {cat: mask for cat, mask in masks.items() if mask.any()}
+    # Vectorized gather + label->category LUT (replaces the per-voxel Python loop; byte-identical
+    # masks, guarded by tests/test_pipeline_parity). In-bounds voxels get their aseg label; a LUT
+    # maps each label to a structure-category index (-1 = unclassified).
+    shp = np.array(aseg_data.shape)
+    inb = np.all((aseg_ijk >= 0) & (aseg_ijk < shp), axis=1)
+    labels = np.zeros(len(nz_ijk), dtype=np.int64)
+    ii = aseg_ijk[inb]
+    labels[inb] = aseg_data[ii[:, 0], ii[:, 1], ii[:, 2]]
+    cat_index = {cat: i for i, cat in enumerate(structure_categories)}
+    maxlbl = int(max(int(aseg_data.max()), max((int(k) for k in categories), default=0))) + 1
+    lut = np.full(maxlbl, -1, dtype=np.int64)
+    for lbl, cat in categories.items():
+        if 0 <= int(lbl) < maxlbl and cat in cat_index:
+            lut[int(lbl)] = cat_index[cat]
+    cat_of = np.where(inb, lut[np.clip(labels, 0, maxlbl - 1)], -1)
+    masks = {}
+    for cat, ci in cat_index.items():           # structure_categories order (stable buffer staging)
+        sel = cat_of == ci
+        if sel.any():
+            m = np.zeros(data.shape, dtype=bool)
+            v = nz_ijk[sel]
+            m[v[:, 0], v[:, 1], v[:, 2]] = True
+            masks[cat] = m
+    return masks
 
 
 def build_smooth_mesh(mask, signed_data, affine, sigma_mm=1.0, target_mm=0.5,
@@ -344,6 +360,7 @@ def process_nifti(src, name, threshold=2.3, classify=True, surface=False):
         'maxClusterSize': int(cluster_data.max()) if cluster_data.size else 0,
         'diverging': diverging,
         'negativeOnly': negative_only,
+        'regionCounts': {cat: int(m.sum()) for cat, m in cats.items()},   # M10: supra-threshold voxels per region
         'structures': structures,
     }
     # Surface-projection meshes (M8): the cortex sheet per hemi, sampled from this volume.

@@ -367,6 +367,17 @@ def render_batch(jobs, **session_kwargs):
     return outs
 
 
+def region_report(nifti, threshold=2.3, template_dir=None):
+    """Per-region supra-threshold voxel counts for a map, from the aseg classification the pipeline
+    already computes (M10). Returns {category: voxel_count}. Uses the bundled fsaverage aseg, or a
+    custom template's aseg when template_dir is given."""
+    from . import pipeline as P
+    data = (Path(template_dir) / "data") if template_dir else (WEB_DIR / "data")
+    P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
+    meta = json.loads(P.process_nifti(str(nifti), Path(nifti).name, threshold))
+    return meta.get("regionCounts", {})
+
+
 def render_orbit(nifti, out, *, layout, frames=24, degrees=360.0, fps=12, gif=False, template_dir=None, **render_kwargs):
     """Turntable animation (M10): render `frames` views spinning the brain through `degrees` total
     (yaw added to every panel's rotation), reusing ONE browser. Writes <stem>_000.png, _001.png, ...
