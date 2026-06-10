@@ -40,6 +40,16 @@ def test_no_surface_when_not_requested():
     assert "surface" not in meta
 
 
+def test_surface_render_is_nonblank_and_differs_from_voxel():
+    import glass_brains as gb
+    kw = dict(views=["left_lateral"], grid="1x1", width=400, height=320, scale=1, colorbar=False)
+    surf = gb.render(str(DEF / "faces.nii.gz"), voxels="surface", **kw)
+    vox = gb.render(str(DEF / "faces.nii.gz"), voxels="smooth", **kw)
+    assert surf.png[:8] == b"\x89PNG\r\n\x1a\n"
+    assert len(surf.png) > 5000           # a full cortex sheet, not a blank frame
+    assert surf.png != vox.png            # surface projection differs from volumetric voxels
+
+
 if __name__ == "__main__":
     test_init_cortex_loads_both_hemis()
     test_surface_projection_samples_cortical_activation()

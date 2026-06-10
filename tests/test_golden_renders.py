@@ -37,6 +37,8 @@ JOBS = [
     ("multi_faces_language_1x2",
      [str(DEF / "faces.nii.gz"), str(DEF / "language.nii.gz")], "1x2",
      ["left_lateral", "dorsal"], {"overlays": [{"colormap": "Reds"}, {"colormap": "YlGnBu"}]}),
+    ("surface_faces_llat", str(DEF / "faces.nii.gz"), "1x1",
+     ["left_lateral"], {"voxel": {"representation": "surface"}}),   # M8 surface projection
 ]
 
 

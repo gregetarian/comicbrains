@@ -161,7 +161,18 @@ def to_volume_layout(layout):
     return out
 
 
-def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=None, template_dir=None, classify=True):
+def _wants_surface(style):
+    """True if any overlay's resolved representation is 'surface' (surface-projection mode, M8)."""
+    if not style:
+        return False
+    if ((style.get("voxel") or {}).get("representation")) == "surface":
+        return True
+    return any(o and ((o.get("voxel") or {}).get("representation")) == "surface"
+               for o in (style.get("overlays") or []))
+
+
+def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=None, template_dir=None,
+                       classify=True, surface=False):
     """Stage a self-contained render dir: a copy of the single viewer with the overlay(s)
     processed in-process (same pipeline.py the browser runs) and written as ARRAYS
     (overlay_<i>.bin + meta in scene.json) — no GLB, no per-render template re-bake.
@@ -188,11 +199,13 @@ def prepare_render_dir(nifti, threshold=2.3, include_subcortical=True, names=Non
     if template_dir is not None:
         shutil.copytree(Path(template_dir) / "data", data, dirs_exist_ok=True)
     P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
+    if surface and (data / "cortex_surface.bin.gz").exists():
+        P.init_cortex((data / "cortex_surface.bin.gz").read_bytes(), (data / "cortex_surface.json").read_text())
 
     metas = []
     for i, src in enumerate(niftis):
         name = names[i] or Path(src).name.replace(".nii.gz", "").replace(".nii", "")
-        meta = json.loads(P.process_nifti(str(src), name, thresholds[i], classify=classify))
+        meta = json.loads(P.process_nifti(str(src), name, thresholds[i], classify=classify, surface=surface))
         # grab THIS overlay's buffers before the next process_nifti clears _BUFFERS
         metas.append(write_overlay_arrays(data, meta, P.get_all_buffers(), index=i))
 
@@ -268,7 +281,8 @@ class RenderSession:
             names = [(o or {}).get("name") for o in style["overlays"]] or None
         n_overlays = 1 if isinstance(nifti, (str, Path)) else len(nifti)
         out_dir = prepare_render_dir(nifti, threshold, include_subcortical, names=names,
-                                     template_dir=self.template_dir, classify=classify)
+                                     template_dir=self.template_dir, classify=classify,
+                                     surface=_wants_surface(style))
         config, transparent = _render_config(
             layout, style, cmap=cmap, width=width, height=height, scale=scale,
             background=background, colorbar=colorbar, colorbar_font=colorbar_font,

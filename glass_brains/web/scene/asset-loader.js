@@ -130,5 +130,29 @@ export function buildOverlayMeshes(meta, buffers, oi) {
             });
         }
     }
+    // Surface-projection meshes (M8): the cortex sheet per hemi, sampled from this volume. Same
+    // voxel role + per-vertex aValue path (so recolor colours them through the LUT), variant
+    // 'surface' (shown only when representation === 'surface'), + an aCurv attribute for the
+    // surface material's curvature-grey fallback below threshold.
+    for (const hemi of ['lh', 'rh']) {
+        const d = meta.surface && meta.surface[hemi];
+        if (!d) continue;
+        const values = asF32(buffers[d.val]);
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', new THREE.BufferAttribute(asF32(buffers[d.pos]), 3));
+        g.setIndex(new THREE.BufferAttribute(asU32(buffers[d.idx]), 1));
+        attachValues(g, values);
+        attachClusters(g, asF32(buffers[d.clu]));
+        g.setAttribute('aCurv', new THREE.BufferAttribute(asF32(buffers[d.crv]), 1));
+        g.computeVertexNormals();
+        const mesh = new THREE.Mesh(g);
+        out.push({
+            mesh,
+            meta: { role: 'voxel', overlay: oi, hemisphere: hemi,
+                    structure: `${meta.name}_${hemi}_cortex`, category: `${hemi}_cortex`, variant: 'surface' },
+            values,
+            aabb: bboxOf(mesh),
+        });
+    }
     return out;
 }

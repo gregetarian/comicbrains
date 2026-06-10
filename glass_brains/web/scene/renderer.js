@@ -14,7 +14,7 @@ import { cameraBasis } from '../core/cameras.js';
 import { visible } from '../core/visibility.js';
 import { resolveColormap, colorizeValues, deriveMaxAbs } from '../core/colormap.js';
 import { overlayStyle } from '../core/config-schema.js';
-import { makeGlassMaterial, makeAnatomyMaterial, makeOpaqueAnatomyMaterial, makeVoxelMaterial, makeSharedVoxelUniforms } from './materials.js';
+import { makeGlassMaterial, makeAnatomyMaterial, makeOpaqueAnatomyMaterial, makeVoxelMaterial, makeSurfaceMaterial, makeSharedVoxelUniforms } from './materials.js';
 import { OutlinePass, makeThresholdDepthMaterial, makePlainDepthMaterial } from './passes.js';
 
 export function createEngine({ renderer, width, height, sceneModel, colormaps, config }) {
@@ -61,7 +61,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
     const cortexMeshes = sceneModel.meshes.filter((tm) => tm.meta.role === 'cortex').map((tm) => tm.mesh);
 
     // --- per-overlay voxel materials + uniforms (overlay i → layer 1+i) ---
-    const uniforms = [], voxelMats = [];
+    const uniforms = [], voxelMats = [], surfaceMats = [];
     for (let i = 0; i < N; i++) {
         const os = overlayStyle(config, i);
         const u = makeSharedVoxelUniforms({
@@ -78,6 +78,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         // genuine front/back occlusion at clearly different depths.
         mat.polygonOffset = true; mat.polygonOffsetFactor = 0; mat.polygonOffsetUnits = i * 6;
         voxelMats.push(mat);
+        surfaceMats.push(makeSurfaceMaterial({}, u));   // variant:'surface' meshes (M8) share the uniforms
     }
 
     // --- place meshes, assign materials + layers + shadows ---
@@ -87,7 +88,8 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         else if (tm.meta.role === 'anatomy') { m.material = anatomyMat; m.renderOrder = 5; m.layers.set(0); m.receiveShadow = SH.enabled; }
         else {
             const oi = tm.meta.overlay ?? 0;
-            m.material = voxelMats[oi] || voxelMats[0];
+            const surf = tm.meta.variant === 'surface';
+            m.material = (surf ? surfaceMats[oi] : voxelMats[oi]) || voxelMats[0];
             m.renderOrder = 15; m.layers.set(1 + oi);       // each overlay on its own layer
             m.castShadow = SH.enabled; m.receiveShadow = SH.enabled;
         }
