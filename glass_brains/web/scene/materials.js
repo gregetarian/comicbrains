@@ -141,6 +141,10 @@ export function makeOpaqueAnatomyMaterial(anatomy = {}) {
         transparent: false,
         depthWrite: true,
         depthTest: true,
+        // TRANSPARENT occluder: write depth (so voxels + cortex lines BEHIND the subcortex are
+        // hidden) but NOT colour — so the shell itself shows the background through it instead of a
+        // white fill. (Its own near-side voxels still draw; the contralateral side stays occluded.)
+        colorWrite: false,
         side: THREE.BackSide,   // back wall only → open front, interior voxels still show
         // push the wall slightly back so voxels at the structure surface win the depth test.
         polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 2,

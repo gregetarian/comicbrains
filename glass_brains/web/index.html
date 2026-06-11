@@ -177,13 +177,7 @@
     .preset-filerow .btn { flex: 1; text-align: center; }
     .preset-list { display: flex; flex-direction: column; gap: 3px; max-height: 200px; overflow-y: auto; scrollbar-width: thin; }
     .preset-empty { font-size: 11px; color: #999; padding: 4px 2px; }
-    /* Empty-state onboarding + viewer-wide drag-and-drop */
-    #onboard { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 5; }
-    #onboard .onboard-card { pointer-events: auto; text-align: center; display: flex; flex-direction: column; gap: 8px;
-        padding: 22px 28px; border: 2px dashed #cfcfcf; border-radius: 12px; background: rgba(255,255,255,0.74); color: #555; max-width: 340px; }
-    #onboard .onboard-card strong { font-size: 15px; color: #333; }
-    #onboard .onboard-card span { font-size: 12px; line-height: 1.4; }
-    #onboard .onboard-card .btn { align-self: center; }
+    /* viewer-wide drag-and-drop feedback */
     #viewer.dragging { outline: 3px dashed #88aabb; outline-offset: -6px; }
     .overlay-row.drop-target { outline: 2px dashed #88aabb; outline-offset: -2px; }
     .overlay-row.dragging { opacity: 0.5; }
@@ -201,11 +195,6 @@
   <div id="viewer">
     <div class="title">comicbrains <span>· in-browser glass brain</span></div>
     <div id="loading">Loading brain…</div>
-    <div id="onboard"><div class="onboard-card">
-      <strong>Drop a NIfTI here</strong>
-      <span>a 3D stat map in MNI152 space — meshed in your browser, nothing leaves your machine</span>
-      <button class="btn" id="onboard-demo">or load the demo maps</button>
-    </div></div>
     <canvas id="canvas"></canvas>
     <label class="kapow-toggle" title="Comic SFX: a 50% chance a 'BOOM!' pops where you click."><input type="checkbox" id="c-kapow" checked> Kapow</label>
   </div>
