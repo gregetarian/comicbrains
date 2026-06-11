@@ -112,11 +112,7 @@ async function main() {
         demoBtn.disabled = true;
         loadNeurosynthDemo().catch((e) => { console.warn('demo load failed:', e); demoLoaded = false; demoBtn.disabled = false; });
     });
-    // Onboarding card's demo button + viewer-wide drag-and-drop upload (the card says "drop here").
-    document.getElementById('onboard-demo')?.addEventListener('click', () => {
-        demoBtn.disabled = true;
-        loadNeurosynthDemo().catch((e) => { console.warn('demo load failed:', e); demoLoaded = false; demoBtn.disabled = false; });
-    });
+    // Viewer-wide drag-and-drop upload (drop a NIfTI anywhere on the canvas).
     const viewerEl = document.getElementById('viewer');
     ['dragenter', 'dragover'].forEach((ev) => viewerEl.addEventListener(ev, (e) => { e.preventDefault(); viewerEl.classList.add('dragging'); }));
     viewerEl.addEventListener('dragleave', (e) => { if (e.target === viewerEl) viewerEl.classList.remove('dragging'); });
@@ -416,7 +412,6 @@ function rebuild() {
 
     // Interactive-only chrome (control rows, the Colorbar toggle state, hover zoom buttons).
     if (!isHeadless) {
-        const onb = document.getElementById('onboard'); if (onb) onb.style.display = overlays.length ? 'none' : 'flex';
         const tgl = document.getElementById('c-colorbar'); if (tgl) tgl.classList.toggle('active', colorbarsVisible);
         buildOverlayRows({ engine, config, colormaps, onRemove: removeOverlay, onSurface: setOverlaySurface, onReorder: reorderOverlays });
         if (config.layout.mode === 'free') {
