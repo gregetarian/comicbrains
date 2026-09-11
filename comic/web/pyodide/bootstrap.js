@@ -37,7 +37,7 @@ export function ensurePyodide(onProgress = () => {}) {
         micropip.destroy();
 
         onProgress('Loading pipeline…');
-        const src = await fetch('pyodide/pipeline.py').then((r) => r.text());
+        const src = await fetch('pyodide/pipeline.py?v=voxel-centres-v2').then((r) => r.text());
         py.FS.writeFile('/pipeline.py', src);
         py.runPython('import sys; sys.path.insert(0, "/")');
         const pipeline = py.pyimport('pipeline');
