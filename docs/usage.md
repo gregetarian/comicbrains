@@ -14,7 +14,7 @@ the page:
 
 The processing pipeline runs locally through Pyodide. The application is a static site:
 its code and template assets are downloaded, but the data you load are not sent to a
-server. The first upload downloads about 30 MB of scientific Python and caches it.
+server. The first use also downloads the scientific Python runtime.
 
 Each loaded map gets its own controls for representation, colourmap, threshold, cluster
 extent, colour limits, transparency and edges. Several overlays can be shown together.
@@ -49,13 +49,12 @@ Until a packaged release is published, install from a source checkout:
 ```bash
 git clone https://github.com/gregetarian/comic
 cd comic
-pip install -e ".[render]"
+python -m pip install -e ".[render]"
 python -m playwright install chromium
 ```
 
-Playwright launches Chromium invisibly, captures the Three.js canvas and closes it. This
-is not a native Python rasteriser and no browser window appears. Reuse a render session for
-large batches so Chromium starts only once.
+Playwright launches headless Chromium, captures the Three.js canvas and closes it.
+Reuse a render session for large batches so Chromium starts only once.
 
 ### Command line
 
@@ -104,8 +103,14 @@ nibabel images, or `(array, affine)` pairs. Use one `gb.RenderSession()` for rep
 
 `figure.json` records presentation state, not the input data. Reproducing a figure requires
 the JSON, the original maps, any custom template assets and a pinned COMIC version or commit.
-Input order binds maps to the saved overlay-style slots. Automatic colour limits are derived
-again from replacement maps; pinned limits remain fixed.
+Input order binds maps to the saved overlay-style slots. New recipes keep processing and
+display thresholds separately. Automatic colour limits are derived again from replacement
+maps; pinned limits remain fixed unless explicitly overridden.
+
+Use `--input-json` descriptions to preserve an arbitrary mixture of volume, surface and
+parcel inputs. The browser supplies these descriptions in its copied command; replace the
+filename hints with local paths. `render_spec()` accepts matching Python dictionaries.
+Explicit CLI style flags override the recipe, while omitted settings stay as saved.
 
 See [Reusing `figure.json`](reusing-figure-json.md) for batch examples and the complete slot
 contract.
@@ -115,7 +120,7 @@ contract.
 ```bash
 git clone https://github.com/gregetarian/comic
 cd comic
-pip install -e .
+python -m pip install -e .
 comic open
 ```
 
