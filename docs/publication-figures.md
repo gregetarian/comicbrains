@@ -287,6 +287,6 @@ COMIC displays already-computed results. It does not register maps or perform st
 
 Cluster membership is determined at the processing threshold; changing the live display threshold does not relabel components. New recipes retain the processing threshold for each input, independently of its display threshold. With this metadata present, `--threshold` changes display only; `--processing-threshold` deliberately rebuilds the prepared geometry. Older recipes without processing metadata fall back to their effective display threshold. Re-export them from the original session if the original loading state is needed.
 
-For the paper examples, both thresholds are 2.3. Smooth geometry, camera angle and transparency affect what is visible. Small raster differences can occur across WebGL implementations, even with the same data and recipe.
+For the volumetric paper examples, both thresholds are 2.3; the parcel example uses 0. Smooth geometry, camera angle and transparency affect what is visible. Small raster differences can occur across WebGL implementations, even with the same data and recipe.
 
 For configuration details, see [Reusing a browser figure](reusing-figure-json.md). For implementation and scientific limits, see [METHODS.md](../METHODS.md).
