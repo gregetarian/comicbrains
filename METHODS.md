@@ -1,13 +1,13 @@
-# COMIC methods
+# Comic methods
 
-This document describes how COMIC turns already-computed neuroimaging results into
+This document describes how Comic turns already-computed neuroimaging results into
 figures. It is intended to make the scientific and computational behaviour inspectable
 without reproducing every implementation detail. The source code and tests remain the
 authoritative specification.
 
 ## Scope
 
-COMIC is a visualisation tool. It does not estimate statistical models, correct for
+Comic is a visualisation tool. It does not estimate statistical models, correct for
 multiple comparisons, register images, or convert a 4D time series into a result map.
 Thresholds, cluster cut-offs, smoothing and surface projection affect the display only.
 
@@ -17,7 +17,7 @@ available through the command-line and Python interfaces.
 
 ## One processing pipeline and one renderer
 
-COMIC has one per-input Python pipeline (`comic/pipeline.py`) and one Three.js renderer
+Comic has one per-input Python pipeline (`comic/pipeline.py`) and one Three.js renderer
 (`comic/web/`). They are used through three interfaces:
 
 | Interface | Processing | Rendering |
@@ -44,7 +44,7 @@ backends.
 
 ### Volumes
 
-COMIC accepts a 3D NIfTI image from a file path, browser upload, in-memory nibabel image,
+Comic accepts a 3D NIfTI image from a file path, browser upload, in-memory nibabel image,
 or an array with an affine through the Python API. Singleton dimensions are removed; a
 genuine 4D image is rejected. NaN and infinite values are replaced with zero before
 thresholding and colour-limit estimation.
@@ -91,7 +91,7 @@ compare the cortical surface with the anatomical footprint and reject bundles th
 the configured tolerance.
 
 Custom bundles must provide mutually aligned surfaces, anatomy, segmentation and maps.
-In volume-only mode COMIC omits the anatomical shell and renders a volume in its own world
+In volume-only mode Comic omits the anatomical shell and renders a volume in its own world
 coordinates.
 
 ## Volume processing
@@ -204,7 +204,7 @@ To reproduce a published figure, retain:
 - the original input data;
 - `figure.json`;
 - any custom template assets; and
-- a tagged COMIC release or exact commit.
+- a tagged Comic release or exact commit.
 
 Small raster differences may still occur across WebGL implementations. Scientific
 comparisons should rely on the saved inputs and configuration rather than PNG hashes.
@@ -212,7 +212,7 @@ comparisons should rely on the saved inputs and configuration rather than PNG ha
 ## Outputs
 
 The browser exports the brain canvas and colour bars separately so legends do not shrink
-the panels. The CLI follows the same convention. COMIC can also write vector SVG colour
+the panels. The CLI follows the same convention. Comic can also write vector SVG colour
 bars, turntable frame sequences and animated GIFs.
 
 ## Validation
@@ -247,6 +247,6 @@ manual inspection of intentional visual changes.
 
 ## Data and software provenance
 
-COMIC's original source code is MIT licensed. Bundled third-party code, fonts, template
+Comic's original source code is MIT licensed. Bundled third-party code, fonts, template
 data, atlas data and demonstration maps retain their own terms. Their sources and licences
 are listed in [NOTICE.md](NOTICE.md).

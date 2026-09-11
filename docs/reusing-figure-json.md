@@ -1,6 +1,6 @@
 # Reuse a browser figure with new data
 
-`figure.json` is a reusable COMIC display recipe. It records the panel positions and sizes,
+`figure.json` is a reusable Comic display recipe. It records the panel positions and sizes,
 camera rotations, cuts, selected cortical surfaces, overlay colours, thresholds, line
 styling, transparency and output dimensions. Keep scientific input files separately;
 the recipe does not embed them.
@@ -14,7 +14,7 @@ The terminal and Python rendering interfaces use the same Three.js renderer as t
 viewer. They therefore launch Chromium through Playwright in headless mode, capture its
 canvas and close it. Both Playwright and its separate Chromium binary are required.
 
-From a COMIC checkout:
+From a Comic checkout:
 
 ```bash
 python -m pip install -e ".[render]"
@@ -209,10 +209,10 @@ change.
 The JSON supplies the presentation: layout, camera, styling, thresholds, colour limits
 and render dimensions. The input data can change, and explicit overrides can change
 selected settings. If a colour limit was pinned in the browser,
-the same limit is reused; if it was automatic, COMIC derives it from each replacement map.
+the same limit is reused; if it was automatic, Comic derives it from each replacement map.
 
 To reproduce a published figure, retain the original data, the JSON, any custom
-template assets, and a pinned COMIC release or commit. The shared renderer keeps the display
+template assets, and a pinned Comic release or commit. The shared renderer keeps the display
 semantics aligned, but different WebGL backends may produce small pixel-level differences.
 
 For comparable figures, use maps in the same spatial template and keep the same
@@ -227,7 +227,7 @@ anatomy does not increase that map's underlying resolution.
   recipes without `inputs` remain supported.
 - **Map is empty:** its values do not survive the threshold/cluster cutoff saved in the JSON,
   or the volume is not aligned with the selected template.
-- **Command not found:** activate the environment where COMIC was installed.
+- **Command not found:** activate the environment where Comic was installed.
 - **Chromium missing:** run `python -m playwright install chromium` in that environment.
 - **Margins differ:** use `--crop content` to match **Save brain**, or omit it to preserve the
   full Free Canvas dimensions.

@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>COMIC — in-browser glass brain</title>
+  <title>Comic — in-browser glass brain</title>
   <!-- Computer Modern (LaTeX roman) web font for the colorbar ticks — vendored offline (web/vendor/). -->
   <link rel="stylesheet" href="./vendor/cm-fonts/fonts.css">
   <style>
@@ -277,7 +277,7 @@
 </head>
 <body>
   <div id="viewer">
-    <div class="title">COMIC <span>· in-browser glass brain</span></div>
+    <div class="title">Comic <span>· in-browser glass brain</span></div>
     <div id="loading">Loading brain…</div>
     <canvas id="canvas"></canvas>
     <label class="kapow-toggle" title="Comic SFX: a 50% chance a 'BOOM!' pops where you click."><input type="checkbox" id="c-kapow" checked> Kapow</label>
@@ -299,7 +299,7 @@
         <span class="sw" title="Layout: pick a built-in panel arrangement, or save/load your own to this browser"><span>layout</span><select class="btn" id="c-layout"></select></span>
         <button class="btn" id="c-presets" title="Style presets: save the current colormaps + parameters to your browser or a JSON file, and load them back onto the visible brains">Presets</button>
         <button class="btn" id="c-cli" title="Copy ready terminal/Python reproduction code; lossless figures also download figure.json">Copy CLI</button>
-        <button class="btn" id="c-help" title="How to use COMIC — a quick guide to every feature">? Help</button>
+        <button class="btn" id="c-help" title="How to use Comic — a quick guide to every feature">? Help</button>
         <span class="zoomcluster" title="Zoom / pan the whole canvas — the brain size is fixed; scroll to zoom, drag empty space to pan">
           <button class="btn" id="c-zoom-out">–</button>
           <button class="btn" id="c-zoom-fit" title="Fit the whole figure to the window">Fit</button>
@@ -369,9 +369,9 @@
 
   <!-- Help / quick-guide modal (opened by the ? Help button; closed by ✕, the backdrop, or Esc) -->
   <div id="help-modal" hidden>
-    <div class="help-card" role="dialog" aria-modal="true" aria-label="COMIC help">
+    <div class="help-card" role="dialog" aria-modal="true" aria-label="Comic help">
       <button class="help-close" id="c-help-close" title="Close (Esc)">✕</button>
-      <h2>COMIC — quick guide</h2>
+      <h2>Comic — quick guide</h2>
       <p class="help-sub">A 3D glass-brain figure maker. Everything runs in your browser — nothing is uploaded.</p>
       <div class="help-cols">
         <section>
@@ -417,7 +417,7 @@
         </section>
       </div>
       <div class="help-foot">
-        <span>COMIC is free and open source (MIT).</span>
+        <span>Comic is free and open source (MIT).</span>
         <a href="https://github.com/gregetarian/comic" target="_blank" rel="noopener">Source on GitHub</a>
         <a href="https://buymeacoffee.com/semilanceata" target="_blank" rel="noopener">Buy me a coffee ☕</a>
       </div>

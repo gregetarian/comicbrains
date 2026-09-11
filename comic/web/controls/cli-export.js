@@ -99,7 +99,7 @@ export function buildRenderText({ config, overlays = [] }) {
         : inputs.map((d) => `--input-json ${q(JSON.stringify(d))}`).join(' ');
     const pythonInputs = volumeOnly ? inputs.map((d) => d.path) : inputs;
     const notes = [
-        '# COMIC browser figure -> reproducible PNG',
+        '# Comic browser figure -> reproducible PNG',
         '# figure.json stores the complete layout, style, template, render size and legend settings.',
         '# Keep figure.json beside this command. Replace source filenames with local paths if needed.',
         '# Inputs bind to style slots in the displayed order; native surfaces and parcel tables keep their own routes.',

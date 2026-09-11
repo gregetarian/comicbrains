@@ -1,6 +1,6 @@
 # Prepare a release and archive
 
-This guide connects a reviewed COMIC revision, its figure reproduction materials and the
+This guide connects a reviewed Comic revision, its figure reproduction materials and the
 Aperture Neuro manuscript. It is a preparation guide: it does not identify a published
 alpha release or an existing Zenodo deposit.
 

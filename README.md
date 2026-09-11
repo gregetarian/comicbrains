@@ -1,11 +1,11 @@
-# COMIC
+# Comic
 
 **Compose three-dimensional brain figures in your browser.**
 
-## [Open COMIC](https://gregetarian.github.io/comic/)
+## [Open Comic](https://gregetarian.github.io/comic/)
 
 Drop in a 3D NIfTI volume, an fsaverage surface map, or a table containing one
-value per cortical parcel. COMIC processes the data locally in your browser and
+value per cortical parcel. Comic processes the data locally in your browser and
 does not upload them to a server. Nothing needs to be installed for ordinary use.
 
 ![Several statistical maps, each with its own colourmap, on one glass brain](figures/clusters_example.png)
@@ -22,7 +22,7 @@ does not upload them to a server. Nothing needs to be installed for ordinary use
 - Exports high-resolution PNG figures, separate colour bars, animated GIFs and a
   reusable `figure.json` display recipe.
 
-COMIC is intended for already-computed human neuroimaging results. It is a figure
+Comic is intended for already-computed human neuroimaging results. It is a figure
 composer, not an analysis, registration or surface-statistics package.
 
 ## Make a figure
@@ -39,7 +39,7 @@ Your input maps are processed on your computer.
 
 The viewer's **Copy CLI** button downloads `figure.json`, which records the layout,
 cameras, cuts, surfaces, colours, thresholds and output size. Keep that file beside
-the original input maps and a pinned COMIC release or commit.
+the original input maps and a pinned Comic release or commit.
 
 For scripted or batch rendering, install the optional renderer from a checkout:
 
@@ -61,7 +61,7 @@ batch rendering, local serving and troubleshooting.
 
 ## Important limits
 
-- The hosted volume workflow expects 3D maps aligned to MNI152. COMIC warns about
+- The hosted volume workflow expects 3D maps aligned to MNI152. Comic warns about
   obvious mismatches but does not register data.
 - Bundled anatomy is a group template, not participant-specific anatomy.
 - Surface projection, smoothing and cut slabs are display operations, not analyses.
@@ -72,17 +72,17 @@ command-line and Python interfaces.
 
 ## Documentation
 
-- [Using COMIC](docs/usage.md)
+- [Using Comic](docs/usage.md)
 - [Publication figures and colour scales](docs/publication-figures.md)
 - [Reusing `figure.json`](docs/reusing-figure-json.md)
 - [Methods and implementation](METHODS.md)
 - [Contributing](CONTRIBUTING.md)
 - [Preparing a release and archive](docs/release-preparation.md)
 
-COMIC is original open-source software released under the [MIT License](LICENSE).
+Comic is original open-source software released under the [MIT License](LICENSE).
 Bundled third-party software and data retain the terms recorded in
 [NOTICE.md](NOTICE.md). Citation metadata are provided in
 [CITATION.cff](CITATION.cff).
 
-COMIC is free and always will be. If it saved you an afternoon of fiddling with
+Comic is free and always will be. If it saved you an afternoon of fiddling with
 figures, you can [buy me a coffee](https://buymeacoffee.com/semilanceata).

@@ -1,4 +1,4 @@
-"""COMIC: interactive 3D brain figures and scripted headless rendering."""
+"""Comic: interactive 3D brain figures and scripted headless rendering."""
 
 from .core import Comic, open_viewer
 from .figure import render, render_spec, Scene, Figure

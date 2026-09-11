@@ -192,14 +192,14 @@ class Comic:
                 return
 
     def _repr_html_(self):
-        return "<p><b>COMIC</b>: bakes the fsaverage template. Run <code>comic open</code> to view.</p>"
+        return "<p><b>Comic</b>: bakes the fsaverage template. Run <code>comic open</code> to view.</p>"
 
 
 def cli(argv=None):
     import argparse
     import sys
     argv = list(sys.argv[1:] if argv is None else argv)
-    parser = argparse.ArgumentParser(description='COMIC neuroimaging figure composer')
+    parser = argparse.ArgumentParser(description='Comic neuroimaging figure composer')
     sub = parser.add_subparsers(dest='command')
 
     op = sub.add_parser('open', aliases=['show'],
@@ -423,7 +423,7 @@ def cli(argv=None):
                 print(f"{name:16s} {n:>8s}  {'yes' if info else 'no':5s}  {spec['source']} — {spec['license']}")
             print("\nBake with:  comic parcels bake <name> [<name> ...]"
                   "\nAtlases marked 'no' are not redistributable, so they are fetched from your own"
-                  "\nFreeSurfer/MNE fsaverage install on demand rather than shipped with COMIC.")
+                  "\nFreeSurfer/MNE fsaverage install on demand rather than shipped with Comic.")
 
     elif args.command == 'render':
         try:

@@ -1,4 +1,4 @@
-# Contributing to COMIC
+# Contributing to Comic
 
 Bug reports, documentation corrections and focused pull requests are welcome. For a bug,
 please include the interface used, browser or operating system, input type, coordinate
@@ -68,7 +68,7 @@ the relevant provenance and synchronisation tests.
 
 Only assets with redistribution terms compatible with the repository may be committed.
 Update [NOTICE.md](NOTICE.md) whenever a bundled third-party component or dataset changes.
-Atlases that COMIC fetches from a user's local installation must remain untracked.
+Atlases that Comic fetches from a user's local installation must remain untracked.
 
 ## Pull requests
 

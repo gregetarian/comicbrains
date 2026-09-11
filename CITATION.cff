@@ -1,7 +1,7 @@
 cff-version: 1.2.0
-message: "If you use COMIC, please cite the software using this metadata."
+message: "If you use Comic, please cite the software using this metadata."
 type: software
-title: "COMIC"
+title: "Comic"
 abstract: >-
   A browser-based and scriptable figure composer for volumetric, surface and
   parcel-wise neuroimaging results, with reproducible layouts and a stylised

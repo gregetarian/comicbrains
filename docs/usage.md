@@ -1,11 +1,11 @@
-# Using COMIC
+# Using Comic
 
 For most users, the hosted browser application is the simplest route. The command-line
 and Python interfaces are optional tools for reproducible, automated or batch output.
 
 ## Browser workflow
 
-Open [COMIC](https://gregetarian.github.io/comic/) and drop one of the following onto
+Open [Comic](https://gregetarian.github.io/comic/) and drop one of the following onto
 the page:
 
 - a 3D NIfTI volume;
@@ -39,7 +39,7 @@ counts are rejected rather than silently misregistered.
 
 Parcel tables may use region names or atlas row order. Schaefer 100, 200, 400 and 1000
 parcel atlases in both 7- and 17-network versions are bundled. A row count alone cannot
-distinguish the 7- and 17-network variants, so COMIC asks when names do not resolve the
+distinguish the 7- and 17-network variants, so Comic asks when names do not resolve the
 ambiguity. Unmatched region names are errors.
 
 ## Scripted rendering
@@ -102,7 +102,7 @@ nibabel images, or `(array, affine)` pairs. Use one `gb.RenderSession()` for rep
 ## Reusing a browser figure
 
 `figure.json` records presentation state, not the input data. Reproducing a figure requires
-the JSON, the original maps, any custom template assets and a pinned COMIC version or commit.
+the JSON, the original maps, any custom template assets and a pinned Comic version or commit.
 Input order binds maps to the saved overlay-style slots. New recipes keep processing and
 display thresholds separately. Automatic colour limits are derived again from replacement
 maps; pinned limits remain fixed unless explicitly overridden.
@@ -130,7 +130,7 @@ more private than the hosted static site, because both process uploaded data loc
 
 ## Scientific and technical limits
 
-- COMIC does not perform registration.
+- Comic does not perform registration.
 - The cortical shell, internal structures and cut anatomy are group templates.
 - Volume-to-surface sampling is a display operation, not surface-based inference.
 - Cluster sizes are computed at the load threshold. Raising the live threshold does not

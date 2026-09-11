@@ -2,7 +2,7 @@
  * parcellation.js — atlas boundary lines on the cortical surface. Browser side.
  *
  * Parcel borders are NOT depth discontinuities, so the depth-edge OutlinePass that draws every
- * other line in COMIC cannot draw them. They are rendered instead as a **geodesic distance
+ * other line in Comic cannot draw them. They are rendered instead as a **geodesic distance
  * field** (built in core/parcel-field.js): each vertex carries `aDist`, its distance in mm to the
  * nearest parcel boundary, and the fragment shader converts that to screen pixels with
  *
@@ -47,7 +47,7 @@ void main(){
 
 // d / |∇d| converts the mm field to screen pixels: a distance field has |∇d| ≈ 1 in mm-per-mm,
 // so the screen-space gradient magnitude IS mm-per-pixel. uHalfWidth is therefore a true
-// device-pixel half-width, the same unit every other line in COMIC uses.
+// device-pixel half-width, the same unit every other line in Comic uses.
 //
 // length(vec2(dFdx, dFdy)) — not fwidth() — because fwidth is |dFdx| + |dFdy|, which overestimates
 // the gradient by up to √2 and, worse, varies with the boundary's orientation on screen: using it

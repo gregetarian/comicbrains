@@ -1,8 +1,8 @@
 # Third-party notices
 
-The MIT licence in [LICENSE](LICENSE) covers COMIC's original source code. The repository
+The MIT licence in [LICENSE](LICENSE) covers Comic's original source code. The repository
 also contains third-party software and data. Those materials remain under the terms of
-their respective copyright holders and are not relicensed by COMIC.
+their respective copyright holders and are not relicensed by Comic.
 
 This file records the provenance known for the assets distributed in the repository. It
 is an attribution and packaging record, not legal advice.
@@ -24,7 +24,7 @@ These assets are group-template anatomy and are not subject-specific reconstruct
 ### ICBM 152 nonlinear atlas 2009c
 
 `comic/web/data/anat_uint8.bin.gz` is derived from the 1 mm ICBM 2009c nonlinear
-asymmetric T1 template distributed with AFNI. COMIC stores a quantised, pial-masked form
+asymmetric T1 template distributed with AFNI. Comic stores a quantised, pial-masked form
 for rendering exposed cut faces.
 
 - Source: [ICBM 152 nonlinear atlases, 2009](https://nist.mni.mcgill.ca/icbm-152-nonlinear-atlases-2009/)
