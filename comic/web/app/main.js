@@ -481,7 +481,7 @@ async function handleUpload(files) {
                 await new Promise((r) => setTimeout(r, 2500));
                 continue;
             }
-            addOverlay(meta, buffers, { surface: true });
+            addOverlay(meta, buffers, { surface: true, lh: g.lh, rh: g.rh, threshold: thr });
         }
         // Per-parcel value tables: infer the atlas, expand onto the vertices, paint through the
         // same surface path, and switch the matching borders on.
@@ -684,7 +684,7 @@ async function loadParcelValues(file, thr, note) {
         (m) => setLoading(m, note));
     // surfaceBase makes the cortical sheet SOLID. Without it the unpainted medial wall is a hole
     // in the geometry, and you see the far side of the same hemisphere through it.
-    addOverlay(meta, buffers, { surface: true },
+    addOverlay(meta, buffers, { surface: true, parcel: true, file, atlas: atlasName, threshold: eps },
         { threshold: eps, voxel: { surfaceBase: '#cccccc' } });
 
     // The borders that go with the data, on the atlas we just resolved.
@@ -977,12 +977,14 @@ async function copyCliCommand() {
     // M3: capture the live whole-canvas pan/zoom into the config so buildSpec/figure.json
     // round-trips it (identity by default → existing figures unchanged).
     if (engine && engine.getView) { const v = engine.getView(); config.layout.view = { s: v.s, cx: v.cx, cy: v.cy }; }
-    const text = buildRenderText({ config, overlays, preset: state.preset, colormaps, panelZoomUsed: state.panelZoomUsed });
+    // Legend visibility is live UI state, so capture it in the exported display document.
+    const exportConfig = { ...config, render: { ...config.render, colorbar: state.colorbarsVisible } };
+    const text = buildRenderText({ config: exportConfig, overlays });
     const flash = (m) => { btn.textContent = m; setTimeout(() => { btn.textContent = label; }, 1600); };
     console.log(text);
-    // Lossless figures (Free Canvas, multi-overlay, or per-panel zoom) also need figure.json.
-    const recipe = overlays.length && usesFigureSpec(config, overlays, state.panelZoomUsed);
-    if (recipe) downloadText(JSON.stringify(buildSpec(config, overlays), null, 2), 'figure.json');
+    // Every browser figure uses the same complete recipe, including simple grids.
+    const recipe = usesFigureSpec(exportConfig, overlays);
+    if (recipe) downloadText(JSON.stringify(buildSpec(exportConfig, overlays), null, 2), 'figure.json');
     try {
         await navigator.clipboard.writeText(text);
         flash(!overlays.length ? 'Load a map' : recipe ? 'Copied + figure.json' : 'Copied!');

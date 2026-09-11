@@ -534,9 +534,9 @@ test('isFreeFigure detects free mode / place / rotate / slice', () => {
     assert.equal(isFreeFigure({ layout: { panels: [{ cell: { row: 0, col: 0 }, rotate: { yaw: 10 } }] } }), true);
 });
 
-test('usesFigureSpec keeps simple grids terse but makes multi-map/zoom exports lossless', () => {
+test('usesFigureSpec preserves every grid style through a recipe', () => {
     const grid = { layout: { mode: 'grid', panels: [{ cell: { row: 0, col: 0 } }] } };
-    assert.equal(usesFigureSpec(grid, [{ meta: { name: 'one.nii.gz' } }], false), false);
+    assert.equal(usesFigureSpec(grid, [{ meta: { name: 'one.nii.gz' } }], false), true);
     assert.equal(usesFigureSpec(grid, [{ meta: { name: 'one.nii.gz' } }, { meta: { name: 'two.nii.gz' } }], false), true);
     assert.equal(usesFigureSpec(grid, [{ meta: { name: 'one.nii.gz' } }], true), true);
 });
@@ -560,7 +560,7 @@ test('buildRenderText emits --spec + an embedded figure.json for a free figure',
     assert.equal(json.layout.canvas.bgAlpha, 0);
     assert.equal(json.layout.panels[0].rotate.yaw, 25);
     assert.equal(json.render.width, 800);
-    assert.deepEqual(json.inputs, [{ slot: 1, name: 'zstat.nii.gz', type: 'volume' }]);
+    assert.deepEqual(json.inputs, [{ slot: 1, name: 'zstat.nii.gz', type: 'volume', label: 'zstat.nii.gz' }]);
 });
 
 test('Free Canvas Copy CLI includes every overlay in slot order', () => {
