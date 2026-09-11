@@ -124,3 +124,16 @@ test('exports without overlay data do not download an empty recipe or invent an 
     assert.equal(buildInputDescriptors([]).length, 0);
     assert.doesNotMatch(buildRenderText({ config: gridConfig(), overlays: [] }), /comic render/);
 });
+
+
+test('saved viewport dimensions stay independent of the layout design canvas', () => {
+    const config = gridConfig();
+    config.render.width = 361;
+    config.render.height = 247;
+    const spec = buildSpec(config, [volume()]);
+    assert.equal(spec.render.width, 361);
+    assert.equal(spec.render.height, 247);
+    assert.equal(spec.layout.canvas.w, 720);
+    assert.equal(spec.layout.canvas.h, 480);
+    assert.deepEqual(spec.layout.view, config.layout.view);
+});

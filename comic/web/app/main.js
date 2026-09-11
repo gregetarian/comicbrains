@@ -21,7 +21,7 @@ import { createEngine } from '../scene/renderer.js?v=shared-legend-v1';
 import { createColorbar } from '../controls/colorbar.js?v=shared-legend-v1';
 import { initKapow } from '../controls/kapow.js?v=depth-auto-v3';
 import { bindGlobalControls, buildOverlayRows } from '../controls/bind.js?v=depth-auto-v3';
-import { buildRenderText, usesFigureSpec, buildSpec } from '../controls/cli-export.js?v=lossless-cli-v1';
+import { buildRenderText, usesFigureSpec, buildSpec } from '../controls/cli-export.js?v=lossless-cli-v2';
 import { createFreeCanvasEditor } from '../controls/freecanvas.js?v=depth-auto-v3';
 import { exportSpinGif } from '../controls/gif-export.js?v=depth-auto-v3';
 import { processNifti, processSurface, processParcelValues } from '../pyodide/bootstrap.js?v=voxel-centres-v2';
@@ -95,6 +95,14 @@ async function main() {
     const cfgUrl = params.get('config') || (DATA + 'render-config.json');
     const rc = state.isHeadless ? await fetchJSONStrict(cfgUrl)
                           : await fetchJSON(cfgUrl, { preset: 'freeDefault', style: {} });
+    // A legacy CLI layout has no independent design size: use its requested render size.
+    // Do this BEFORE normalisation supplies browser defaults. Saved browser recipes retain
+    // their own design canvas, which can differ from the visible (panned/clipped) viewport.
+    if (state.isHeadless && rc.layout) {
+        rc.layout.canvas = { ...rc.layout.canvas,
+            w: rc.layout.canvas?.w ?? rc.render?.width ?? 1600,
+            h: rc.layout.canvas?.h ?? rc.render?.height ?? 1000 };
+    }
     state.preset = params.get('preset') || rc.preset || 'freeDefault';
     config = (rc.layout && !params.get('preset')) ? resolveConfig(rc) : resolveConfig(state.preset, { style: rc.style || {} });
 
@@ -256,9 +264,11 @@ async function runHeadless() {
     }
     container.style.width = config.render.width + 'px';
     container.style.height = config.render.height + 'px';
-    // Pin the DESIGN size to the render size so the view transform is the identity
-    // (s=1, centred, viewport == design) → the headless figure is byte-identical to before.
-    config.layout.canvas = { ...(config.layout.canvas || {}), w: config.render.width, h: config.render.height };
+    // Keep the saved design canvas independent of the requested viewport; offscreen panels
+    // must remain clipped exactly as they were when Copy CLI captured the browser figure.
+    config.layout.canvas = { ...config.layout.canvas,
+        w: config.layout.canvas?.w ?? config.render.width,
+        h: config.layout.canvas?.h ?? config.render.height };
 
     const metas = baseScene.manifest.overlays || [];
     overlays = [];
@@ -977,8 +987,12 @@ async function copyCliCommand() {
     // M3: capture the live whole-canvas pan/zoom into the config so buildSpec/figure.json
     // round-trips it (identity by default → existing figures unchanged).
     if (engine && engine.getView) { const v = engine.getView(); config.layout.view = { s: v.s, cx: v.cx, cy: v.cy }; }
-    // Legend visibility is live UI state, so capture it in the exported display document.
-    const exportConfig = { ...config, render: { ...config.render, colorbar: state.colorbarsVisible } };
+    // Save the visible viewport separately from the design canvas. Keeping only the design
+    // size would reveal panels that the user had panned or zoomed beyond the window edge.
+    const exportConfig = { ...config, render: { ...config.render,
+        width: canvas.clientWidth, height: canvas.clientHeight,
+        pixelRatio: renderer?.getPixelRatio() ?? window.devicePixelRatio ?? 1,
+        colorbar: !!colorbar } };
     const text = buildRenderText({ config: exportConfig, overlays });
     const flash = (m) => { btn.textContent = m; setTimeout(() => { btn.textContent = label; }, 1600); };
     console.log(text);

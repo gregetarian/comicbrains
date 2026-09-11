@@ -61,8 +61,8 @@ export function buildSpec(config, overlays = []) {
         style: config.style,
         render: {
             ...config.render,
-            width: Math.round(cv?.w || config.render?.width || 1600),
-            height: Math.round(cv?.h || config.render?.height || 1000),
+            width: Math.round(config.render?.width || cv?.w || 1600),
+            height: Math.round(config.render?.height || cv?.h || 1000),
             background: config.render?.background ?? '#ffffff',
             colorbarWidth: config.render?.colorbarWidth ?? 240,
             colorbarHeight: config.render?.colorbarHeight ?? 14,
