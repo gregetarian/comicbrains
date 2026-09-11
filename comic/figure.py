@@ -51,11 +51,19 @@ def build_style(n, *, base=None, cmap=None, colormapMode=None, gamma=None, clim=
         if value is None:
             return
         if isinstance(value, (list, tuple)):           # per-overlay
-            for i in range(min(n, len(value))):
+            if len(value) != n:
+                raise ValueError(f'{gpath}: expected {n} per-overlay values, received {len(value)}')
+            for i in range(n):
                 if value[i] is not None:
                     _set(overlays[i], gpath, value[i])
         else:                                          # global broadcast
             _set(style, gpath, value)
+            for overlay in overlays:
+                target = overlay
+                *parents, key = gpath.split('.')
+                for parent in parents:
+                    target = target.get(parent, {})
+                target.pop(key, None)
 
     assign(cmap, "colormap")
     assign(colormapMode, "colormapMode")
@@ -66,8 +74,13 @@ def build_style(n, *, base=None, cmap=None, colormapMode=None, gamma=None, clim=
     assign(threshold, "threshold")                     # live (display) threshold
     if clim is not None:
         style["clim"] = clim                           # global only (see docstring)
+        for overlay in overlays:
+            overlay.pop('clim', None)
     if units is not None:
-        style["units"] = units
+        style['units'] = {**style.get('units', {}), **units}
+        for overlay in overlays:
+            for key in units:
+                (overlay.get('units') or {}).pop(key, None)
     if not overlays:
         style.pop("overlays", None)
     # bake threshold (geometry cutoff): scalar broadcasts, list is per-overlay.
@@ -190,13 +203,14 @@ def render(nifti, *, out=None, layout=None, views=None, grid="2x4", style=None,
     return Figure(brain, cbar, config, out)
 
 
-def render_spec(spec, nifti, *, out=None, session=None, width=None, height=None, scale=2,
-                background_alpha=None, colorbar=True, crop="none", names=None):
+def render_spec(spec, nifti, *, out=None, session=None, width=None, height=None, scale=None,
+                background_alpha=None, colorbar=None, crop="none", names=None, template=None):
     """Render the SAME figure.json the browser Copy-CLI emits. `spec` is a path or dict;
     `nifti` (path/list) fills the overlay slots in order. Validates loudly via spec.validate."""
     import json
     from pathlib import Path
     from . import spec as gb_spec
+    from .inputs import input_descriptors, processing_thresholds, input_names, validate_input_types
     doc = spec if isinstance(spec, dict) else json.loads(Path(spec).read_text())
     gb_spec.validate(doc)
     layout = doc.get("layout", doc)
@@ -205,24 +219,44 @@ def render_spec(spec, nifti, *, out=None, session=None, width=None, height=None,
     w = width or r.get("width", 1600)
     h = height or r.get("height", 1000)
     bg_a = background_alpha if background_alpha is not None else (layout.get("canvas") or {}).get("bgAlpha", 1.0)
-    # per-overlay bake threshold = each overlay's live threshold (baked == shown)
-    ov = style.get("overlays") or []
-    nn = 1 if isinstance(nifti, (str, os.PathLike)) else len(nifti)
-    gb_spec.validate_input_count(doc, nn, volume_only=True)
-    thr = [(ov[i].get("threshold") if i < len(ov) and ov[i].get("threshold") is not None
-            else style.get("threshold") if style.get("threshold") is not None else 0)
-           for i in range(nn)]
-    sess = session or RenderSession()
+    items = [nifti] if isinstance(nifti, (str, os.PathLike, dict)) else list(nifti)
+    ordered = any(isinstance(item, dict) for item in items)
+    descriptors = input_descriptors(input_maps=[item if isinstance(item, dict) else {'type': 'volume', 'path': item}
+                                               for item in items])
+    nn = len(descriptors)
+    gb_spec.validate_input_count(doc, nn)
+    validate_input_types(doc, descriptors)
+    thr = processing_thresholds(doc, nn)
+    saved_template = doc.get('template') or {}
+    kind = saved_template.get('kind', 'mni')
+    template_dir = template or (saved_template.get('dir') if kind == 'custom' else None)
+    if kind == 'custom' and not template_dir and session is None:
+        raise ValueError('custom template recipe needs template=... or a prepared RenderSession')
+    sess = session or RenderSession(template_dir=template_dir)
     try:
-        brain, cbar = sess.render(nifti, out, layout=layout, style=style, threshold=thr,
-                                  cmap=style.get("colormap", "auto"), width=w, height=h, scale=scale,
-                                  background_alpha=bg_a, colorbar=colorbar, crop=crop, names=names,
+        brain, cbar = sess.render(None if ordered else nifti, out, layout=layout, style=style, threshold=thr,
+                                  cmap=style.get("colormap", "auto"), width=w, height=h,
+                                  scale=scale if scale is not None else r.get('pixelRatio', 2),
+                                  background=r.get('background', '#ffffff'), background_alpha=bg_a,
+                                  colorbar=colorbar if colorbar is not None else r.get('colorbar', True),
+                                  crop=crop, names=names or input_names(doc, nn), classify=kind != 'none',
+                                  input_maps=descriptors if ordered else None, render_options=r,
                                   return_bytes=True)
     finally:
         if session is None:
             sess.close()
-    return Figure(brain, cbar, {"template": doc.get("template"), "layout": layout, "style": style,
-                                "render": {"width": w, "height": h}}, out)
+    used = copy.deepcopy(doc)
+    used.update({'layout': layout, 'style': style})
+    used['render'] = {**r, 'width': w, 'height': h,
+                      'pixelRatio': scale if scale is not None else r.get('pixelRatio', 2),
+                      'background': r.get('background', '#ffffff'),
+                      'colorbar': colorbar if colorbar is not None else r.get('colorbar', True)}
+    if background_alpha is not None:
+        used['layout'] = copy.deepcopy(layout)
+        used['layout'].setdefault('canvas', {})['bgAlpha'] = bg_a
+    if template_dir:
+        used['template'] = {**saved_template, 'kind': 'custom', 'dir': str(template_dir)}
+    return Figure(brain, cbar, used, out)
 
 
 class Scene:

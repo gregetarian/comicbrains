@@ -50,6 +50,7 @@ jobs:
           --ignore=tests/test_surface.py
           --ignore=tests/test_ui_defaults.py
           --ignore=tests/test_view_transform.py
+          --ignore=tests/test_browser_cli_replay.py
           --ignore=tests/test_volume_only.py
 
   # ---- Fast, required: the browser-core JS unit tests (node's built-in test runner) ------
@@ -84,6 +85,7 @@ jobs:
         run: >
           pytest -q
           tests/integration_test.py
+          tests/test_browser_cli_replay.py
           tests/test_animation.py
           tests/test_cli_per_overlay.py
           tests/test_custom_template.py

@@ -45,6 +45,89 @@ def _parse_units(s):
     return dict(kv.split('=', 1) for kv in (p.strip() for p in str(s).split(',')) if '=' in kv)
 
 
+def _explicit_options(parser, argv):
+    """Track supplied options, including values equal to defaults and --flag=value."""
+    supplied = set()
+    for token in argv:
+        if token == '--':
+            break
+        if token.startswith('-'):
+            parsed = parser._parse_optional(token)
+            if isinstance(parsed, list):  # argparse 3.12+ returns candidate tuples
+                parsed = parsed[0] if parsed else None
+            if parsed and parsed[0] is not None:
+                supplied.add(parsed[0].dest)
+    return supplied
+
+
+def _override_recipe_style(style, args, supplied, n):
+    from .figure import build_style
+    from .render import _deep_merge
+    if 'style' in supplied:
+        loaded = json.loads(Path(args.style).read_text())
+        style = _deep_merge(style, loaded.get('style', loaded))
+    def value(key, cast=None):
+        v = getattr(args, key) if key in supplied else None
+        return _los(v, cast) if cast else v
+    style, _ = build_style(n, base=style, cmap=value('cmap', str), colormapMode=value('colormap_mode', str),
+                          gamma=value('gamma', float), clim=_parse_clim(value('clim')),
+                          threshold=value('threshold', float), clusterMin=value('cluster_size', int),
+                          positiveOnly=value('positive_only'), voxels=value('voxels', str),
+                          units=_parse_units(value('units')))
+    paths = {
+        'surface': 'cortexSurface', 'smooth': 'voxel.smoothing', 'margin': 'margin',
+        'shadows': 'shadows.enabled', 'veil': 'voxel.veil.strength', 'veil_k': 'voxel.veil.k',
+        'emissive': 'voxel.emissive', 'specular': 'voxel.specular', 'shininess': 'voxel.shininess',
+        'directional': 'lighting.directional', 'ambient': 'lighting.ambient',
+        'cortex_alpha': 'glass.maxOpacity', 'edge_thr': 'outline.threshold', 'line_w': 'outline.width',
+        'lines_over_voxels': 'outline.overVoxels', 'over_voxel_opacity': 'outline.overVoxelOpacity',
+        'voxel_edge_w': 'voxel.edges.width', 'voxel_alpha': 'voxel.opacity',
+        'voxel_edge_alpha': 'voxel.edges.opacity', 'line_color': 'outline.color',
+        'anat_line_color': 'outline.anatomyColor', 'voxel_edge_color': 'voxel.edges.color',
+        'surface_base': 'voxel.surfaceBase', 'silhouette_color': 'outline.silhouette.color',
+        'silhouette_w': 'outline.silhouette.width', 'border_color': 'parcellation.color',
+        'border_w': 'parcellation.width', 'mask_color': 'parcellation.maskColor',
+        'edge_mode': 'voxel.edges.mode', 'depth_mode': 'voxel.depthMode',
+        'subcortex_voxels': 'voxel.subcortexRepresentation',
+        'cut_slab': 'cutOverlay.slabMm', 'cut_interpolation': 'cutOverlay.interpolation',
+    }
+    def setp(path, val):
+        d = style
+        keys = path.split('.')
+        for key in keys[:-1]:
+            d = d.setdefault(key, {})
+        d[keys[-1]] = val
+        # Explicit global display flags broadcast over saved per-overlay overrides.
+        if keys[0] in ('voxel', 'cutOverlay'):
+            for o in style.get('overlays') or []:
+                d = o
+                for key in keys[:-1]:
+                    d = d.get(key, {})
+                d.pop(keys[-1], None)
+    for flag, path in paths.items():
+        if flag in supplied:
+            setp(path, getattr(args, flag))
+    for flag, path, val in [('no_edges', 'voxel.edges.enabled', False), ('no_outline', 'outline.enabled', False),
+                            ('slice_anatomy', 'sliceAnatomy', True), ('mask_medial_wall', 'parcellation.maskMedialWall', True)]:
+        if flag in supplied:
+            setp(path, val)
+    if args.borders and 'borders' in supplied:
+        setp('parcellation.enabled', True)
+        setp('parcellation.atlas', args.borders)
+    if 'mask_medial_wall' in supplied and not (style.get('parcellation') or {}).get('atlas'):
+        if not args.parcel_atlas:
+            raise ValueError('--mask-medial-wall needs an atlas in the recipe, --borders or --parcel-atlas')
+        setp('parcellation.atlas', args.parcel_atlas)
+    if args.cut_overlay:
+        setp('sliceAnatomy', True)
+        setp('cutOverlay.enabled', True)
+    for i, patch in enumerate(args.overlay_json or []):
+        if i >= n:
+            raise ValueError('--overlay-json has more entries than inputs')
+        style['overlays'][i] = _deep_merge(style['overlays'][i], json.loads(patch))
+    return style
+
+
 def open_viewer(port=8421):
     """Serve the static viewer locally and open it in the browser. Uploads are processed
     in-browser via Pyodide — identical to the GitHub Pages site; no Python backend."""
@@ -112,8 +195,10 @@ class Comic:
         return "<p><b>COMIC</b>: bakes the fsaverage template. Run <code>comic open</code> to view.</p>"
 
 
-def cli():
+def cli(argv=None):
     import argparse
+    import sys
+    argv = list(sys.argv[1:] if argv is None else argv)
     parser = argparse.ArgumentParser(description='COMIC neuroimaging figure composer')
     sub = parser.add_subparsers(dest='command')
 
@@ -146,6 +231,10 @@ def cli():
                         'the cortex sheet with no blocky/smooth geometry. Format: '
                         "'lh=lh.gii,rh=rh.gii[,name=Label]' (either hemi optional). Repeat for "
                         'several surface overlays. Volume overlays (positional) come first.')
+    r.add_argument('--input-json', action='append', metavar='JSON',
+                   help='ordered volume/surface/parcel descriptor; repeat in overlay order. '
+                        'Use type+path for volumes, type+lh/rh for surfaces, type+path+atlas for parcels. '
+                        'Cannot be combined with positional inputs, --surface-map or --parcel-values.')
     r.add_argument('-o', '--out', required=True, help='output PNG path')
     r.add_argument('--grid', default='2x4', help='grid as RxC, e.g. 2x2')
     r.add_argument('--views',
@@ -153,11 +242,14 @@ def cli():
                    help="comma-separated views, row-major. e.g. left_lateral,right_lateral,axial,frontal. "
                         "'_' = blank cell. Aliases: axial=dorsal, frontal=anterior, etc.")
     r.add_argument('--spec', default=None,
-                   help="path to a Free-Canvas figure JSON (the canvas document, as emitted by the "
-                        "browser's Copy CLI). When given, it supplies the layout and overrides --grid/--views.")
+                   help="browser figure JSON. Supplies layout and saved settings; explicit style/output flags "
+                        "override them. Change layout in the recipe rather than combining --grid/--views.")
     # Per-overlay flags accept a scalar (all maps) OR a comma list (one value per overlay).
     r.add_argument('--threshold', default='0', help='voxel threshold; scalar or per-overlay comma list, e.g. 2.3,4.0. '
                         'Default 0 = keep the map unthresholded')
+    r.add_argument('--processing-threshold', default=None,
+                   help='geometry loading cutoff; scalar or per-overlay list. By default preserve the '
+                        'recipe loading cutoff, or use the display threshold for older recipes/new figures.')
     r.add_argument('-k', '--cluster-size', default='0',
                    help='cluster-extent threshold (voxels); scalar or per-overlay comma list. '
                         'Default 0 = do not hide small clusters')
@@ -202,6 +294,10 @@ def cli():
                         'front/back sorting where blobs overlap')
     r.add_argument('--voxel-edge-alpha', type=float, default=None,
                    help='blob outline (edge line) opacity 0..1')
+    r.add_argument('--edge-mode', choices=['auto', 'outer', 'full'], default=None,
+                   help='outer blob contours or full visible depth edges')
+    r.add_argument('--depth-mode', choices=['manual', 'clusters', 'anatomy'], default=None)
+    r.add_argument('--subcortex-voxels', choices=['blocky', 'smooth'], default=None)
     r.add_argument('--line-color', default=None, metavar='#RRGGBB',
                    help='colour of the cortical fold (sulcal/gyral) lines (default #000000)')
     r.add_argument('--anat-line-color', default=None, metavar='#RRGGBB',
@@ -238,7 +334,7 @@ def cli():
                         'letting the glass shell show through. Makes the cortical sheet solid, so an '
                         'unpainted medial wall reads as grey surface rather than a window onto the far '
                         'side of the hemisphere. Defaults on (#cccccc) with --parcel-values')
-    r.add_argument('--positive-only', action='store_true')
+    r.add_argument('--positive-only', action=argparse.BooleanOptionalAction, default=None)
     r.add_argument('--no-edges', action='store_true')
     r.add_argument('--no-outline', action='store_true')
     r.add_argument('--slice-anatomy', action='store_true',
@@ -285,7 +381,8 @@ def cli():
     r.add_argument('--colorbar-svg', action='store_true',
                    help='also write the colorbar legend as vector SVG (<out>_colorbars.svg)')
 
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
+    supplied = _explicit_options(r, argv[1:]) if args.command == 'render' else set()
 
     if args.command in ('open', 'show'):
         if args.nifti:
@@ -329,235 +426,183 @@ def cli():
                   "\nFreeSurfer/MNE fsaverage install on demand rather than shipped with COMIC.")
 
     elif args.command == 'render':
-        from .render import build_layout, render_to_png, load_spec, _deep_merge, to_volume_layout
-        from .figure import build_style
+        try:
+            from .render import build_layout, render_to_png, load_spec, to_volume_layout
+            from .inputs import input_descriptors, processing_thresholds, input_names, validate_input_types
+            spec_doc = json.loads(Path(args.spec).read_text()) if args.spec else {}
+            template = spec_doc.get('template') or {}
+            if args.spec and {'grid', 'views'} & supplied:
+                parser.error('--spec supplies the layout; edit its panels instead of combining --grid/--views')
+            if not args.template and template.get('kind') == 'custom':
+                args.template = template.get('dir')
+                if not args.template:
+                    parser.error('custom template recipe needs --template DIR')
+            if template.get('kind') == 'none' and not args.template:
+                args.no_template = True
+            input_maps = None
+            if args.input_json:
+                if args.nifti or args.surface_map or args.parcel_values:
+                    parser.error('--input-json cannot be combined with positional inputs, --surface-map or --parcel-values')
+                try:
+                    input_maps = input_descriptors(input_maps=[json.loads(s) for s in args.input_json])
+                except (ValueError, TypeError) as exc:
+                    parser.error(str(exc))
+                if args.sweep is not None or args.orbit is not None:
+                    parser.error('--input-json is not supported with --sweep/--orbit; use positional volumes')
 
-        # Native surface overlays: 'lh=..,rh=..[,name=..]' each -> a dict. They render AFTER the
-        # positional volume overlays, so overlay indices are [volumes..., surfaces...].
-        surface_maps = []
-        for spec in (args.surface_map or []):
-            d = dict(kv.split('=', 1) for kv in spec.split(',') if '=' in kv)
-            if 'lh' not in d and 'rh' not in d:
-                parser.error(f"--surface-map '{spec}' needs at least lh=<file> or rh=<file>")
-            surface_maps.append(d)
-        # --parcel-values: expand a per-region table into per-vertex maps and hand them to the
-        # SAME native-surface path a .gii would take. The atlas doubles as the border source, so
-        # `--parcel-values t.csv --parcel-atlas schaefer400_7` is the whole figure in one flag.
-        if args.parcel_values:
-            from . import parcels as P
-            atlas = args.parcel_atlas or args.borders
-            if not atlas:
-                parser.error('--parcel-values needs --parcel-atlas (or --borders) to name the parcellation')
-            maps = P.values_to_vertex_maps(P.load_value_table(args.parcel_values), atlas,
-                                           WEB_DIR / 'data' / 'parcels')
-            surface_maps.append({'lh': maps['lh'], 'rh': maps['rh'],
-                                 'name': Path(args.parcel_values).stem})
-            args.borders = args.borders or atlas
-            # An atlas figure wants a SOLID cortical sheet: without it the unpainted medial wall is
-            # a hole in the geometry and the far side of the hemisphere shows through it.
-            if args.surface_base is None:
-                args.surface_base = '#cccccc'
-            # A per-parcel table is not a z-map: the default 2.3 cutoff would blank most figures.
-            # Not exactly 0 either — the medial wall and any parcel absent from the table are 0,
-            # and a 0 threshold would paint them as the bottom of the colormap instead of leaving
-            # the cortex showing through. An epsilon hides exact zeros and nothing else.
-            if args.threshold == r.get_default('threshold'):
-                args.threshold = '1e-9'
-
-        if not args.nifti and not surface_maps:
-            parser.error("render needs at least one NIfTI (positional) or a --surface-map")
-        if surface_maps and (args.sweep is not None or args.orbit is not None):
-            parser.error("--surface-map is not supported with --sweep/--orbit yet")
-
-        n = len(args.nifti) + len(surface_maps)
-        names = [s.strip() for s in args.names.split(',')] if args.names else None
-
-        if args.spec:
-            # --spec is authoritative for layout + style + size; input data stay separate.
-            # CLI style flags are ignored here; --width/--height/--bg-alpha still override.
-            layout, style, spec_render = load_spec(args.spec)
-            from . import spec as gb_spec
-            spec_doc = json.loads(Path(args.spec).read_text())
-            try:
-                gb_spec.validate_input_count(spec_doc, n)
-            except ValueError as e:
-                parser.error(str(e))
-            if args.slice_anatomy:
-                style['sliceAnatomy'] = True
-            if args.cut_overlay:
-                style['sliceAnatomy'] = True
-                style.setdefault('cutOverlay', {})['enabled'] = True
-            if args.cut_slab is not None:
-                style.setdefault('cutOverlay', {})['slabMm'] = args.cut_slab
-            if args.cut_interpolation is not None:
-                style.setdefault('cutOverlay', {})['interpolation'] = args.cut_interpolation
-            cmap = style.get('colormap', args.cmap)
-            width = args.width if args.width is not None else spec_render.get('width', 1600)
-            height = args.height if args.height is not None else spec_render.get('height', 1000)
-            # Per-overlay BAKE threshold = that overlay's live threshold, so baked == shown
-            # (style.overlays[i].threshold -> global style.threshold -> --threshold).
-            ov = style.get('overlays') or []
-            thresholds = [
-                (ov[i]['threshold'] if i < len(ov) and ov[i].get('threshold') is not None
-                 else style['threshold'] if style.get('threshold') is not None
-                 else float(args.threshold))
-                for i in range(n)
-            ]
-        else:
-            layout = build_layout(args.grid, [v for v in args.views.split(',')])
-            # Per-overlay style from comma-list flags (scalar broadcasts), over an optional preset.
-            base = {}
-            if args.style:
-                loaded = json.loads(Path(args.style).read_text())
-                base = loaded.get('style', loaded)
-            style, thresholds = build_style(
-                n, base=base,
-                cmap=_los(args.cmap, str), colormapMode=_los(args.colormap_mode, str),
-                gamma=_los(args.gamma, float), clim=_parse_clim(args.clim),
-                threshold=_los(args.threshold, float), clusterMin=_los(args.cluster_size, int),
-                positiveOnly=(True if args.positive_only else None),
-                voxels=_los(args.voxels, str), units=_parse_units(args.units),
-            )
-
-            # Remaining GLOBAL style flags (build_style handled the per-overlay ones above).
-            def setp(path, val):
-                if val is None:
-                    return
-                d = style
-                keys = path.split('.')
-                for k in keys[:-1]:
-                    d = d.setdefault(k, {})
-                d[keys[-1]] = val
-
-            setp('cortexSurface', args.surface)
-            setp('voxel.smoothing', args.smooth)
-            setp('margin', args.margin)
-            setp('shadows.enabled', args.shadows)
-            setp('voxel.veil.strength', args.veil)
-            setp('voxel.veil.k', args.veil_k)
-            setp('voxel.emissive', args.emissive)
-            setp('voxel.specular', args.specular)
-            setp('voxel.shininess', args.shininess)
-            setp('lighting.directional', args.directional)
-            setp('lighting.ambient', args.ambient)
-            setp('glass.maxOpacity', args.cortex_alpha)
-            setp('outline.threshold', args.edge_thr)
-            setp('outline.width', args.line_w)
-            setp('outline.overVoxels', args.lines_over_voxels)
-            setp('outline.overVoxelOpacity', args.over_voxel_opacity)
-            setp('voxel.edges.width', args.voxel_edge_w)
-            setp('voxel.opacity', args.voxel_alpha)
-            setp('voxel.edges.opacity', args.voxel_edge_alpha)
-            setp('outline.color', args.line_color)
-            setp('outline.anatomyColor', args.anat_line_color)
-            setp('voxel.edges.color', args.voxel_edge_color)
-            setp('voxel.surfaceBase', args.surface_base)
-            setp('outline.silhouette.color', args.silhouette_color)
-            setp('outline.silhouette.width', args.silhouette_w)
-            if args.borders:
-                setp('parcellation.enabled', True)
-                setp('parcellation.atlas', args.borders)
-            if args.mask_medial_wall:
-                # Masking needs the atlas LABELS, not its borders — keep the two independent.
-                atlas = args.borders or args.parcel_atlas
+            # Native surface overlays: 'lh=..,rh=..[,name=..]' each -> a dict. They render AFTER the
+            # positional volume overlays, so overlay indices are [volumes..., surfaces...].
+            surface_maps = []
+            for spec in (args.surface_map or []):
+                d = dict(kv.split('=', 1) for kv in spec.split(',') if '=' in kv)
+                if 'lh' not in d and 'rh' not in d:
+                    parser.error(f"--surface-map '{spec}' needs at least lh=<file> or rh=<file>")
+                surface_maps.append(d)
+            # --parcel-values: expand a per-region table into per-vertex maps and hand them to the
+            # SAME native-surface path a .gii would take. The atlas doubles as the border source, so
+            # `--parcel-values t.csv --parcel-atlas schaefer400_7` is the whole figure in one flag.
+            if args.parcel_values:
+                from . import parcels as P
+                atlas = args.parcel_atlas or args.borders
                 if not atlas:
-                    parser.error('--mask-medial-wall needs --borders or --parcel-atlas to say '
-                                 'which atlas defines the medial wall')
-                setp('parcellation.atlas', atlas)
-                setp('parcellation.maskMedialWall', True)
-            setp('parcellation.maskColor', args.mask_color)
-            setp('parcellation.color', args.border_color)
-            setp('parcellation.width', args.border_w)
-            if args.no_edges:
-                setp('voxel.edges.enabled', False)
-            if args.no_outline:
-                setp('outline.enabled', False)
-            if args.slice_anatomy:
-                setp('sliceAnatomy', True)
-            if args.cut_overlay:
-                setp('sliceAnatomy', True)
-                setp('cutOverlay.enabled', True)
-            setp('cutOverlay.slabMm', args.cut_slab)
-            setp('cutOverlay.interpolation', args.cut_interpolation)
-            # --overlay-json: lossless per-overlay escape hatch (the i-th binds overlay i).
-            if args.overlay_json:
-                ovl = style.setdefault('overlays', [])
-                for i, oj in enumerate(args.overlay_json):
-                    while len(ovl) <= i:
-                        ovl.append({})
-                    ovl[i] = _deep_merge(ovl[i], json.loads(oj))
-            # Several maps without explicit per-overlay colormaps: distinct default palette.
-            if n > 1:
-                ovl = style.setdefault('overlays', [])
-                while len(ovl) < n:
-                    ovl.append({})
-                if not any((o or {}).get('colormap') for o in ovl):
-                    palette = ['YlGnBu', 'Reds', 'Greens', 'Purples', 'Oranges', 'Blues', 'YlOrRd', 'BuPu']
-                    for i in range(n):
-                        ovl[i]['colormap'] = palette[i % len(palette)]
-            # Global colormap for render_to_png: the scalar --cmap, or 'auto' when per-overlay
-            # colormaps drive each map (so the global doesn't override them).
-            cmap = args.cmap if ',' not in str(args.cmap) else 'auto'
-            width = args.width if args.width is not None else 1600
-            height = args.height if args.height is not None else 1000
+                    parser.error('--parcel-values needs --parcel-atlas (or --borders) to name the parcellation')
+                maps = P.values_to_vertex_maps(P.load_value_table(args.parcel_values), atlas,
+                                               (Path(args.template) / 'data' if args.template else WEB_DIR / 'data') / 'parcels')
+                surface_maps.append({'lh': maps['lh'], 'rh': maps['rh'],
+                                     'name': Path(args.parcel_values).stem})
+                args.borders = args.borders or atlas
+                # An atlas figure wants a SOLID cortical sheet: without it the unpainted medial wall is
+                # a hole in the geometry and the far side of the hemisphere shows through it.
+                if args.surface_base is None:
+                    args.surface_base = '#cccccc'
+                # The medial wall and any parcel absent from the table are 0,
+                # and a 0 threshold would paint them as the bottom of the colormap instead of leaving
+                # the cortex showing through. An epsilon hides exact zeros and nothing else.
+                if 'threshold' not in supplied:
+                    args.threshold = '1e-9'
+
+            if not args.nifti and not surface_maps and not input_maps:
+                parser.error("render needs at least one NIfTI (positional) or a --surface-map")
+            if surface_maps and (args.sweep is not None or args.orbit is not None):
+                parser.error("--surface-map is not supported with --sweep/--orbit yet")
+
+            descriptors = input_descriptors(args.nifti or None, surface_maps, input_maps)
+            if args.parcel_values:
+                descriptors[-1] = {'type': 'parcel', 'path': args.parcel_values, 'atlas': args.parcel_atlas or args.borders}
+            n = len(descriptors)
+            names = [s.strip() for s in args.names.split(',')] if args.names else None
+            if names is not None and len(names) != n:
+                parser.error(f'--names expects {n} labels; received {len(names)}')
+
+            if args.spec:
+                # Preserve saved processing state; only explicitly supplied flags override display state.
+                layout, style, spec_render = load_spec(args.spec)
+                from . import spec as gb_spec
+                spec_doc = json.loads(Path(args.spec).read_text())
+                try:
+                    gb_spec.validate_input_count(spec_doc, n)
+                    validate_input_types(spec_doc, descriptors)
+                    style = _override_recipe_style(style, args, supplied, n)
+                except ValueError as e:
+                    parser.error(str(e))
+                if args.slice_anatomy:
+                    style['sliceAnatomy'] = True
+                if args.cut_overlay:
+                    style['sliceAnatomy'] = True
+                    style.setdefault('cutOverlay', {})['enabled'] = True
+                if args.cut_slab is not None:
+                    style.setdefault('cutOverlay', {})['slabMm'] = args.cut_slab
+                if args.cut_interpolation is not None:
+                    style.setdefault('cutOverlay', {})['interpolation'] = args.cut_interpolation
+                cmap = style.get('colormap', args.cmap)
+                width = args.width if args.width is not None else spec_render.get('width', 1600)
+                height = args.height if args.height is not None else spec_render.get('height', 1000)
+                thresholds = processing_thresholds({**spec_doc, 'style': style}, n)
+                names = names or input_names({**spec_doc, 'style': style}, n)
+            else:
+                layout = build_layout(args.grid, [v for v in args.views.split(',')])
+                # Apply defaults, then a style file, then only explicitly supplied flags.
+                # Share the same override rules as --spec so presets cannot be silently
+                # overwritten by argparse defaults.
+                base = {'colormap': 'YlGnBu', 'threshold': 0, 'voxel': {'clusterMin': 0}}
+                if args.parcel_values:
+                    base['threshold'] = 1e-9
+                    base['voxel']['surfaceBase'] = '#cccccc'
+                    base['parcellation'] = {'enabled': True, 'atlas': args.borders}
+                style = _override_recipe_style(base, args, supplied, n)
+                if n > 1 and 'cmap' not in supplied and not args.style:
+                    overlays = style.setdefault('overlays', [{} for _ in range(n)])
+                    if not any((o or {}).get('colormap') for o in overlays):
+                        palette = ['YlGnBu', 'Reds', 'Greens', 'Purples', 'Oranges', 'Blues', 'YlOrRd', 'BuPu']
+                        for i, overlay in enumerate(overlays):
+                            overlay['colormap'] = palette[i % len(palette)]
+                cmap = style.get('colormap', 'auto')
+                width = args.width if args.width is not None else 1600
+                height = args.height if args.height is not None else 1000
+                if args.no_template:
+                    layout = to_volume_layout(layout)   # volume-only: voxel role, no hemisphere split
+
+                thresholds = processing_thresholds({'style': style}, n)
+
+            if args.processing_threshold is not None:
+                raw = _los(args.processing_threshold, float)
+                raw = raw if isinstance(raw, list) else [raw] * n
+                if len(raw) != n or any(x is None for x in raw):
+                    parser.error(f'--processing-threshold expects a scalar or {n} values')
+                thresholds = processing_thresholds({'inputs': [{'processingThreshold': t} for t in raw]}, n)
             if args.no_template:
-                layout = to_volume_layout(layout)   # volume-only: voxel role, no hemisphere split
+                layout = to_volume_layout(layout)
+            spec_render = spec_doc.get('render') or {}
+            if 'scale' not in supplied:
+                args.scale = spec_render.get('pixelRatio', args.scale)
+            if 'colorbar' not in supplied:
+                args.colorbar = spec_render.get('colorbar', args.colorbar)
 
-        # Transparent background: explicit --bg-alpha wins; else the spec's canvas.bgAlpha; else opaque.
-        bg_alpha = args.bg_alpha
-        if bg_alpha is None:
-            bg_alpha = (layout.get('canvas') or {}).get('bgAlpha', 1.0)
+            # Transparent background: explicit --bg-alpha wins; else the spec's canvas.bgAlpha; else opaque.
+            bg_alpha = args.bg_alpha
+            if bg_alpha is None:
+                bg_alpha = (layout.get('canvas') or {}).get('bgAlpha', 1.0)
 
-        common = dict(layout=layout, style=style, threshold=thresholds, cmap=cmap, names=names,
-                      template_dir=args.template, width=width, height=height, scale=args.scale,
-                      include_subcortical=not args.no_subcortical, classify=not args.no_template,
-                      background_alpha=bg_alpha, crop=args.crop)
-        if args.sweep is not None:                  # threshold/cluster sweep small-multiples (M10)
-            from .render import render_sweep
-            pname, vals = args.sweep.split('=', 1)
-            cast = float if pname.strip() == 'threshold' else int
-            render_sweep(args.nifti[0], args.out, param=pname.strip(),
-                         values=[cast(x) for x in vals.split(',')], **common)
-        elif args.orbit is not None:                # turntable animation (M10)
-            from .render import render_orbit
-            render_orbit(args.nifti, args.out, frames=args.frames, degrees=args.orbit,
-                         fps=args.fps, gif=args.gif, **common)
-        else:
-            render_to_png(args.nifti, args.out, colorbar=args.colorbar,
-                          colorbar_font=args.colorbar_font, colorbar_fontsize=args.colorbar_fontsize,
-                          surface_maps=surface_maps, **common)
+            common = dict(layout=layout, style=style, threshold=thresholds, cmap=cmap, names=names,
+                          template_dir=args.template, width=width, height=height, scale=args.scale,
+                          include_subcortical=not args.no_subcortical, classify=not args.no_template,
+                          background=spec_render.get('background', '#ffffff'), background_alpha=bg_alpha, crop=args.crop)
+            if args.sweep is not None:                  # threshold/cluster sweep small-multiples (M10)
+                from .render import render_sweep
+                pname, vals = args.sweep.split('=', 1)
+                cast = float if pname.strip() == 'threshold' else int
+                render_sweep(args.nifti[0], args.out, param=pname.strip(),
+                             values=[cast(x) for x in vals.split(',')], **common)
+            elif args.orbit is not None:                # turntable animation (M10)
+                from .render import render_orbit
+                render_orbit(args.nifti, args.out, frames=args.frames, degrees=args.orbit,
+                             fps=args.fps, gif=args.gif, **common)
+            else:
+                render_to_png(args.nifti, args.out, colorbar=args.colorbar,
+                              colorbar_font=args.colorbar_font, colorbar_fontsize=args.colorbar_fontsize,
+                              surface_maps=surface_maps, input_maps=input_maps, render_options=spec_render,
+                              colorbar_svg=args.colorbar_svg, **common)
 
-        if args.regions:                            # per-region voxel-count CSV (M10)
-            import csv
-            from .render import region_report
-            with open(args.regions, 'w', newline='') as f:
-                w = csv.writer(f); w.writerow(['overlay', 'region', 'voxels'])
-                for i, nif in enumerate(args.nifti):
-                    thr = thresholds[i] if isinstance(thresholds, list) else thresholds
-                    for cat, n in region_report(nif, thr, template_dir=args.template).items():
-                        w.writerow([Path(nif).name, cat, n])
-            print('Wrote region report ->', args.regions)
+            if args.regions:                            # per-region voxel-count CSV (M10)
+                import csv
+                from .render import region_report
+                with open(args.regions, 'w', newline='') as f:
+                    w = csv.writer(f); w.writerow(['overlay', 'region', 'voxels'])
+                    for i, item in enumerate(descriptors):
+                        if item['type'] != 'volume':
+                            continue
+                        nif = item['path']
+                        thr = thresholds[i] if isinstance(thresholds, list) else thresholds
+                        for cat, n in region_report(nif, thr, template_dir=args.template).items():
+                            w.writerow([Path(nif).name, cat, n])
+                print('Wrote region report ->', args.regions)
 
-        if args.colorbar_svg:                       # vector colorbar legend(s) (M10)
-            from .render import colorbar_svg
-            from . import pipeline as P
-            data = (Path(args.template) / "data") if args.template else (WEB_DIR / "data")
-            P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
-            cm = data / "colormaps.json"
-            cj = json.loads((cm if cm.exists() else WEB_DIR / "data" / "colormaps.json").read_text())
-            ov, units = style.get('overlays') or [], (style.get('units') or {}).get('value')
-            for i, nif in enumerate(args.nifti):
-                thr = thresholds[i] if isinstance(thresholds, list) else thresholds
-                meta = json.loads(P.process_nifti(str(nif), Path(nif).name, thr))
-                m, div, neg = meta.get('maxAbsValue', 1.0), meta.get('diverging'), meta.get('negativeOnly')
-                ocmap = ((ov[i].get('colormap') if i < len(ov) and (ov[i] or {}).get('colormap') else None)
-                         or (cmap if cmap != 'auto' else None) or ('coolwarm' if div else 'viridis'))
-                vmin, vmax = (-m if (div or neg) else 0.0), (0.0 if neg else m)
-                side = Path(args.out)
-                suffix = f"_overlay{i}" if len(args.nifti) > 1 else ""
-                colorbar_svg(side.with_name(side.stem + suffix + "_colorbars.svg"),
-                             colormap=ocmap, vmin=vmin, vmax=vmax, units=units, colormaps_json=cj)
-            print('Wrote SVG colorbar legend(s)')
+            if args.colorbar_svg and (args.sweep is not None or args.orbit is not None):
+                from .render import export_colorbar_svgs
+                export_colorbar_svgs(args.out, input_maps=descriptors, style=style, thresholds=thresholds,
+                                     template_dir=args.template, classify=not args.no_template)
+        except (ValueError, FileNotFoundError) as exc:
+            parser.error(str(exc))
 
     else:
         parser.print_help()

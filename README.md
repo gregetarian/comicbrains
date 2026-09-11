@@ -1,6 +1,6 @@
 # COMIC
 
-**Publication-ready 3D brain figures, directly in your browser.**
+**Compose three-dimensional brain figures in your browser.**
 
 ## [Open COMIC](https://gregetarian.github.io/comic/)
 
@@ -32,8 +32,8 @@ composer, not an analysis, registration or surface-statistics package.
 3. Choose the views, surfaces, colours and thresholds.
 4. Export with **Save brain**, **Save bars** or **GIF**.
 
-The first upload downloads about 30 MB of scientific Python for the browser and
-caches it. Your map remains on your computer throughout.
+The first use downloads the application, template assets and scientific Python runtime.
+Your input maps are processed on your computer.
 
 ## Reproduce it later
 
@@ -46,16 +46,15 @@ For scripted or batch rendering, install the optional renderer from a checkout:
 ```bash
 git clone https://github.com/gregetarian/comic
 cd comic
-pip install -e ".[render]"
+python -m pip install -e ".[render]"
 python -m playwright install chromium
 
 comic render zstat.nii.gz --spec figure.json -o figure.png
 ```
 
-The command-line and Python interfaces use the same Three.js application in an
-invisible headless Chromium process. No browser window appears, but Playwright and
-the separate Chromium download are required. A Python API is also available for
-notebooks and in-memory nibabel images.
+The command-line and Python interfaces use the same Three.js application in a
+headless Chromium process. Playwright and its separate Chromium download are required.
+A Python API is also available for notebooks and in-memory nibabel images.
 
 See the [usage guide](docs/usage.md) for CLI and Python examples, supported inputs,
 batch rendering, local serving and troubleshooting.
@@ -74,9 +73,11 @@ command-line and Python interfaces.
 ## Documentation
 
 - [Using COMIC](docs/usage.md)
+- [Publication figures and colour scales](docs/publication-figures.md)
 - [Reusing `figure.json`](docs/reusing-figure-json.md)
 - [Methods and implementation](METHODS.md)
 - [Contributing](CONTRIBUTING.md)
+- [Preparing a release and archive](docs/release-preparation.md)
 
 COMIC is original open-source software released under the [MIT License](LICENSE).
 Bundled third-party software and data retain the terms recorded in

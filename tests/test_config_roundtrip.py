@@ -48,11 +48,12 @@ def test_exported_input_slots_validate_and_enforce_count():
     exported = json.loads(json.dumps(GOOD))
     exported["inputs"] = [
         {"slot": 1, "name": "language.nii.gz", "type": "volume"},
-        {"slot": 2, "name": "dmn.nii.gz", "type": "volume"},
+        {"slot": 2, "name": "left.func.gii", "type": "surface"},
+        {"slot": 3, "name": "values.csv", "type": "parcel"},
     ]
     spec.validate(exported)
-    spec.validate_input_count(exported, 2, volume_only=True)
-    with pytest.raises(ValueError, match="expects 2 input"):
+    spec.validate_input_count(exported, 3)
+    with pytest.raises(ValueError, match="expects 3 input"):
         spec.validate_input_count(exported, 1)
 
     exported["inputs"][1]["slot"] = 7

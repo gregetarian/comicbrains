@@ -231,7 +231,12 @@ def load_stat_map(src, filename=None, threshold=2.3):
         with open(path, 'wb') as f:
             f.write(b)
         img = nib.load(path)
-    data = np.squeeze(np.asarray(img.dataobj, dtype=np.float32))
+    data = np.asarray(img.dataobj, dtype=np.float32)
+    # The first three axes are spatial even when one has length one: dropping it
+    # would either reject a valid slab or reinterpret time as a spatial dimension.
+    trailing_singletons = tuple(i for i in range(3, data.ndim) if data.shape[i] == 1)
+    if trailing_singletons:
+        data = np.squeeze(data, axis=trailing_singletons)
     if data.ndim != 3:
         raise ValueError(
             f"Expected a 3D statistical map, got shape {np.asarray(img.dataobj).shape}. "
@@ -344,7 +349,11 @@ def cluster_sizes(data, connectivity=26):
 
 
 def _voxel_mesh(mask, *fields):
-    """Axis-aligned exposed-face voxel mesh; sample each scalar field per vertex."""
+    """Exposed voxel faces in centre-index coordinates, with per-voxel scalars.
+
+    A NIfTI affine maps integer indices to voxel centres. A voxel at index ``i``
+    therefore spans ``i - 0.5`` to ``i + 0.5`` before the full affine transform.
+    """
     padded = np.pad(mask, 1, mode='constant', constant_values=False)
     directions = [
         (0, +1, np.array([[1, 0, 0], [1, 1, 0], [1, 1, 1], [1, 0, 1]], dtype=np.float32)),
@@ -366,7 +375,7 @@ def _voxel_mesh(mask, *fields):
         if len(voxels) == 0:
             continue
         n = len(voxels)
-        quad_verts = (voxels[:, np.newaxis, :] + corners[np.newaxis, :, :]).reshape(-1, 3)
+        quad_verts = (voxels[:, np.newaxis, :] + corners[np.newaxis, :, :] - 0.5).reshape(-1, 3)
         for fi, fld in enumerate(fields):
             voxel_vals = fld[voxels[:, 0], voxels[:, 1], voxels[:, 2]]
             all_fields[fi].append(np.repeat(voxel_vals, 4))
@@ -458,6 +467,11 @@ def build_smooth_mesh(mask, signed_data, affine, sigma_mm=1.0, target_mm=0.5,
     vox = np.sqrt((affine[:3, :3] ** 2).sum(axis=0))
     zoom = vox / target_mm
     sigma_vox = sigma_mm / target_mm
+    # Include real background beyond the image boundary, not a clipped crop whose
+    # occupied edge is reflected by the Gaussian filter. Three sigma of background
+    # also keeps high-resolution images from truncating the smoothing kernel.
+    padding = np.maximum(pad, np.ceil(3 * sigma_mm / vox).astype(int))
+    padding = np.maximum(padding, 1)
     budget = (SMOOTH_MAX_UPSAMPLED_VOXELS if max_upsampled_voxels is None
               else max_upsampled_voxels)
     labels, n_comp = ndimage.label(mask)
@@ -465,9 +479,12 @@ def build_smooth_mesh(mask, signed_data, affine, sigma_mm=1.0, target_mm=0.5,
     for lab in range(1, n_comp + 1):
         comp = labels == lab
         idx = np.argwhere(comp)
-        lo = np.maximum(idx.min(0) - pad, 0)
-        hi = np.minimum(idx.max(0) + pad + 1, np.array(mask.shape))
-        sl = tuple(slice(a, b) for a, b in zip(lo, hi))
+        lo = idx.min(0) - padding
+        hi = idx.max(0) + padding + 1
+        source_lo = np.maximum(lo, 0)
+        source_hi = np.minimum(hi, np.array(mask.shape))
+        sl = tuple(slice(a, b) for a, b in zip(source_lo, source_hi))
+        outside = tuple(zip(source_lo - lo, hi - source_hi))
         # Per-component resolution: coarsen only when this component's upsample blows the budget,
         # otherwise use the exact default zoom/sigma so normal output stays byte-identical.
         c_zoom, c_sigma_vox = zoom, sigma_vox
@@ -482,8 +499,8 @@ def build_smooth_mesh(mask, signed_data, affine, sigma_mm=1.0, target_mm=0.5,
             if warn_on_coarsen:
                 warnings.warn(msg, stacklevel=2)
                 print("WARNING:", msg)
-        sub_occ = comp[sl].astype(np.float32)
-        sub_val = signed_data[sl].astype(np.float32)
+        sub_occ = np.pad(comp[sl].astype(np.float32), outside)
+        sub_val = np.pad(signed_data[sl].astype(np.float32), outside)
         zero = sub_val == 0
         if zero.any() and (~zero).any():
             ind = ndimage.distance_transform_edt(zero, return_distances=False, return_indices=True)
@@ -495,14 +512,25 @@ def build_smooth_mesh(mask, signed_data, affine, sigma_mm=1.0, target_mm=0.5,
         verts, faces, _, _ = measure.marching_cubes(occ, level=0.5)
         vert_vals = ndimage.map_coordinates(val, verts.T, order=1)
         if cluster_data is not None:
-            sub_clu = cluster_data[sl].astype(np.float32)
+            sub_clu = np.pad(cluster_data[sl].astype(np.float32), outside)
             czero = sub_clu == 0
             if czero.any() and (~czero).any():
                 ind = ndimage.distance_transform_edt(czero, return_distances=False, return_indices=True)
                 sub_clu = sub_clu[tuple(ind)]
             clu = ndimage.zoom(sub_clu, c_zoom, order=0)
             all_clu.append(ndimage.map_coordinates(clu, verts.T, order=0).astype(np.float32))
-        native_idx = lo[np.newaxis, :] + verts / c_zoom[np.newaxis, :]
+        # scipy.ndimage.zoom's default grid_mode=False aligns the FIRST and LAST
+        # input voxel centres with the output endpoints. Its requested zoom is not
+        # the coordinate scale: output lengths are rounded, and the centre-to-centre
+        # extent is (length - 1). Using verts / c_zoom shifts and stretches the mesh,
+        # even for an integer zoom. Recover the exact input coordinates instead.
+        native_step = np.divide(
+            np.asarray(sub_occ.shape, dtype=float) - 1,
+            np.asarray(occ.shape, dtype=float) - 1,
+            out=np.zeros(3, dtype=float),
+            where=np.asarray(occ.shape) > 1,
+        )
+        native_idx = lo[np.newaxis, :] + verts * native_step[np.newaxis, :]
         homo = np.column_stack([native_idx, np.ones(len(native_idx))])
         world = (affine @ homo.T).T[:, :3]
         all_v.append(world.astype(np.float32))

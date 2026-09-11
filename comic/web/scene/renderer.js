@@ -1150,7 +1150,7 @@ export function createEngine({ renderer, width, height, sceneModel, colormaps, c
         setParcellation, getParcellation: () => parcLoaded,
         getSurfaceVariants: () => surfaceVariants.slice(),
         setSpinFit: (v) => { spinFit = !!v; },   // sphere-fit (constant size) only while spinning
-        overlays, config, renderer, THREE, sceneModel,
+        overlays, config, colormaps, renderer, THREE, sceneModel,
         _internals: { uniforms, glassMat, anatomyMat, voxelMats, dir, amb },
     };
 }

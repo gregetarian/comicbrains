@@ -17,21 +17,21 @@ import { setOverlayStyle } from '../core/config-schema.js?v=depth-auto-v3';
 import { createPresetsUI, randomColormapName } from '../controls/style-presets.js?v=depth-auto-v3';
 import { contentBBoxPx } from '../core/bbox.js?v=depth-auto-v3';
 import { loadBaseScene, buildOverlayMeshes, buildCutVolume, loadOverlayArrays, loadAnatomyVolume, loadParcellation, loadParcellationIndex } from '../scene/asset-loader.js?v=depth-auto-v3';
-import { createEngine } from '../scene/renderer.js?v=depth-auto-v3';
-import { createColorbar } from '../controls/colorbar.js?v=depth-auto-v3';
+import { createEngine } from '../scene/renderer.js?v=shared-legend-v1';
+import { createColorbar } from '../controls/colorbar.js?v=shared-legend-v1';
 import { initKapow } from '../controls/kapow.js?v=depth-auto-v3';
 import { bindGlobalControls, buildOverlayRows } from '../controls/bind.js?v=depth-auto-v3';
-import { buildRenderText, usesFigureSpec, buildSpec } from '../controls/cli-export.js?v=depth-auto-v3';
+import { buildRenderText, usesFigureSpec, buildSpec } from '../controls/cli-export.js?v=lossless-cli-v2';
 import { createFreeCanvasEditor } from '../controls/freecanvas.js?v=depth-auto-v3';
 import { exportSpinGif } from '../controls/gif-export.js?v=depth-auto-v3';
-import { processNifti, processSurface, processParcelValues } from '../pyodide/bootstrap.js?v=depth-auto-v3';
+import { processNifti, processSurface, processParcelValues } from '../pyodide/bootstrap.js?v=voxel-centres-v2';
 import { VOL_RE, isSurfaceFile, isParcelValueFile, groupSurfaceFiles, surfaceOverlayName } from '../core/surface-files.js?v=depth-auto-v3';
 import { parseValueTable, inferAtlas, valuesToVertexMaps, namedValuesToParcelOrder } from '../core/parcel-values.js?v=depth-auto-v3';
 import { askAtlas } from '../controls/atlas-prompt.js?v=depth-auto-v3';
 import { createSessionState } from './state.js?v=depth-auto-v3';
 
 const DATA = 'data/';
-const DEMO_ASSET_VER = 'cut-volume-v1';
+const DEMO_ASSET_VER = 'voxel-centres-v2';
 
 // --- session state ---
 // Session flags + the current preset live in ONE object (see app/state.js): state.isHeadless,
@@ -95,6 +95,14 @@ async function main() {
     const cfgUrl = params.get('config') || (DATA + 'render-config.json');
     const rc = state.isHeadless ? await fetchJSONStrict(cfgUrl)
                           : await fetchJSON(cfgUrl, { preset: 'freeDefault', style: {} });
+    // A legacy CLI layout has no independent design size: use its requested render size.
+    // Do this BEFORE normalisation supplies browser defaults. Saved browser recipes retain
+    // their own design canvas, which can differ from the visible (panned/clipped) viewport.
+    if (state.isHeadless && rc.layout) {
+        rc.layout.canvas = { ...rc.layout.canvas,
+            w: rc.layout.canvas?.w ?? rc.render?.width ?? 1600,
+            h: rc.layout.canvas?.h ?? rc.render?.height ?? 1000 };
+    }
     state.preset = params.get('preset') || rc.preset || 'freeDefault';
     config = (rc.layout && !params.get('preset')) ? resolveConfig(rc) : resolveConfig(state.preset, { style: rc.style || {} });
 
@@ -256,9 +264,11 @@ async function runHeadless() {
     }
     container.style.width = config.render.width + 'px';
     container.style.height = config.render.height + 'px';
-    // Pin the DESIGN size to the render size so the view transform is the identity
-    // (s=1, centred, viewport == design) → the headless figure is byte-identical to before.
-    config.layout.canvas = { ...(config.layout.canvas || {}), w: config.render.width, h: config.render.height };
+    // Keep the saved design canvas independent of the requested viewport; offscreen panels
+    // must remain clipped exactly as they were when Copy CLI captured the browser figure.
+    config.layout.canvas = { ...config.layout.canvas,
+        w: config.layout.canvas?.w ?? config.render.width,
+        h: config.layout.canvas?.h ?? config.render.height };
 
     const metas = baseScene.manifest.overlays || [];
     overlays = [];
@@ -481,7 +491,7 @@ async function handleUpload(files) {
                 await new Promise((r) => setTimeout(r, 2500));
                 continue;
             }
-            addOverlay(meta, buffers, { surface: true });
+            addOverlay(meta, buffers, { surface: true, lh: g.lh, rh: g.rh, threshold: thr });
         }
         // Per-parcel value tables: infer the atlas, expand onto the vertices, paint through the
         // same surface path, and switch the matching borders on.
@@ -684,7 +694,7 @@ async function loadParcelValues(file, thr, note) {
         (m) => setLoading(m, note));
     // surfaceBase makes the cortical sheet SOLID. Without it the unpainted medial wall is a hole
     // in the geometry, and you see the far side of the same hemisphere through it.
-    addOverlay(meta, buffers, { surface: true },
+    addOverlay(meta, buffers, { surface: true, parcel: true, file, atlas: atlasName, threshold: eps },
         { threshold: eps, voxel: { surfaceBase: '#cccccc' } });
 
     // The borders that go with the data, on the atlas we just resolved.
@@ -977,12 +987,18 @@ async function copyCliCommand() {
     // M3: capture the live whole-canvas pan/zoom into the config so buildSpec/figure.json
     // round-trips it (identity by default → existing figures unchanged).
     if (engine && engine.getView) { const v = engine.getView(); config.layout.view = { s: v.s, cx: v.cx, cy: v.cy }; }
-    const text = buildRenderText({ config, overlays, preset: state.preset, colormaps, panelZoomUsed: state.panelZoomUsed });
+    // Save the visible viewport separately from the design canvas. Keeping only the design
+    // size would reveal panels that the user had panned or zoomed beyond the window edge.
+    const exportConfig = { ...config, render: { ...config.render,
+        width: canvas.clientWidth, height: canvas.clientHeight,
+        pixelRatio: renderer?.getPixelRatio() ?? window.devicePixelRatio ?? 1,
+        colorbar: !!colorbar } };
+    const text = buildRenderText({ config: exportConfig, overlays });
     const flash = (m) => { btn.textContent = m; setTimeout(() => { btn.textContent = label; }, 1600); };
     console.log(text);
-    // Lossless figures (Free Canvas, multi-overlay, or per-panel zoom) also need figure.json.
-    const recipe = overlays.length && usesFigureSpec(config, overlays, state.panelZoomUsed);
-    if (recipe) downloadText(JSON.stringify(buildSpec(config, overlays), null, 2), 'figure.json');
+    // Every browser figure uses the same complete recipe, including simple grids.
+    const recipe = usesFigureSpec(exportConfig, overlays);
+    if (recipe) downloadText(JSON.stringify(buildSpec(exportConfig, overlays), null, 2), 'figure.json');
     try {
         await navigator.clipboard.writeText(text);
         flash(!overlays.length ? 'Load a map' : recipe ? 'Copied + figure.json' : 'Copied!');

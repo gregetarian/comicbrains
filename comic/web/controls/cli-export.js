@@ -1,168 +1,113 @@
 /**
- * cli-export.js — generate the `comic render` CLI command that reproduces
- * the current on-screen view.
- *
- * This works because the browser viewer and the CLI `render` command consume the
- * SAME config schema (core/config-schema.js): render.py just turns flags into that
- * config and runs the identical headless viewer. Free Canvas figures use a figure.json
- * recipe because their per-panel placement/rotation/slices cannot be expressed cleanly as
- * flags. The browser knows each uploaded file's name, but not its original disk path, so the
- * user may need to replace those names with paths on the machine that performs the render.
+ * Lossless browser -> CLI export. Every figure uses the shared JSON display document;
+ * translating only a subset of its style into flags silently loses browser settings.
+ * Files stay separate. Browsers expose upload names, not their original disk paths.
  */
-import { overlayStyle } from '../core/config-schema.js?v=depth-auto-v3';
-import { resolveColormap } from '../core/colormap.js?v=depth-auto-v3';
 
-// Browser layout preset -> CLI --grid / --views (view names match render.py VIEWS).
-const PRESET_VIEWS = {
-    fourPanel: { grid: '2x2', views: 'left_lateral,right_lateral,left_medial,right_medial' },
-    fiveView:  { grid: '2x3', views: 'left_lateral,dorsal,right_lateral,left_medial,_,right_medial' },
-    sixView:   { grid: '2x3', views: 'left_lateral,dorsal,right_lateral,left_medial,ventral,right_medial' },
-    ninePanel: { grid: '2x4', views: 'left_lateral,right_lateral,left_medial,right_medial,anterior,dorsal,subcortical_l,subcortical_r' },
-    overview:  { grid: '2x2', views: 'left_lateral,anterior,dorsal,right_medial' },
+// POSIX-shell quoting. JSON descriptors also keep commas/equals in native-surface paths
+// unambiguous, unlike the legacy --surface-map lh=...,rh=... syntax.
+const q = (value) => {
+    const s = String(value);
+    return s && /^[\w.\-/]+$/.test(s) ? s : `'${s.replace(/'/g, "'\\''")}'`;
 };
-
-// Viewer defaults (core/config-schema.js DEFAULTS.style) — emit a flag only when the
-// current value differs, so the command stays readable.
-const D = {
-    cortexSurface: 'inflated', representation: 'smooth', gamma: 0.5,
-    veilStrength: 0, veilK: 7.4, emissive: 1.0, specular: 0.0, shininess: 200,
-    directional: 0, ambient: 0, glassMaxOpacity: 0.0, outlineThreshold: 0.018,
-    edgeWidth: 1.9, colormapMode: 'auto', overVoxelOpacity: 0.4,
-    lineColor: '#000000', edgeColor: '#808080',
-};
-
-const fmt = (n) => { const v = +n; return Number.isInteger(v) ? String(v) : String(Math.round(v * 1e4) / 1e4); };
-const q = (s) => (/[^\w.\-/]/.test(s) ? `'${String(s).replace(/'/g, "'\\''")}'` : String(s));
 const inputName = (o, i) => o.src?.file?.name || o.meta?.name || `map${i + 1}.nii.gz`;
+const copyJSON = (value) => JSON.parse(JSON.stringify(value));
+// Quoting alone does not prevent an input called --help.nii.gz being parsed as an option.
+const positionalPath = (path) => path.startsWith('-') ? `./${path}` : path;
 
-/** A figure is "free" (needs --spec, not --grid/--views) if it's in Free Canvas mode or
- *  any panel carries free placement / per-panel rotation / a slice. */
+/** Retained for callers that need to distinguish grid and freely placed layouts. */
 export function isFreeFigure(config) {
     const L = config.layout || {};
     return L.mode === 'free' || (L.panels || []).some((p) => p.place || p.rotate || p.slice);
 }
 
-/** A JSON recipe is the lossless path for Free Canvas, multiple overlays, or per-panel zoom.
- *  A simple unzoomed one-overlay grid remains readable as ordinary --grid/--views flags. */
-export function usesFigureSpec(config, overlays = [], panelZoomUsed = false) {
-    return isFreeFigure(config) || overlays.length > 1 || panelZoomUsed;
+/** All browser figures need a recipe, including a single unzoomed grid overlay. */
+export function usesFigureSpec(_config, overlays = [], _panelZoomUsed = false) {
+    return overlays.length > 0;
 }
 
-/** The portable display document the CLI reproduces with `--spec figure.json`.
- *  It bundles the layout (place/rotate/slice/canvas), the full style, and the render
- *  size/aspect. Input data and the COMIC version remain separate. */
+/** Source descriptors follow the actual overlay order, which can change after upload.
+ * Native surfaces retain their hemisphere files; parcel tables retain their selected atlas.
+ * Missing names are explicit replacement hints, never mislabelled as NIfTI inputs. */
+export function buildInputDescriptors(overlays = []) {
+    return overlays.map((o, i) => {
+        const src = o.src || {};
+        const name = o.meta?.name || inputName(o, i);
+        if (src.parcel) {
+            return { type: 'parcel', path: src.file?.name || `REPLACE_WITH_parcels${i + 1}.csv`,
+                atlas: src.atlas, name };
+        }
+        if (src.surface || (!src.file && o.meta?.surfaceOnly)) {
+            const d = { type: 'surface', name };
+            if (src.lh?.name) d.lh = src.lh.name;
+            if (src.rh?.name) d.rh = src.rh.name;
+            if (!d.lh && !d.rh) d.lh = `REPLACE_WITH_lh.map${i + 1}.gii`;
+            return d;
+        }
+        return { type: 'volume', path: inputName(o, i), name };
+    });
+}
+
+/** Portable display document. Preserve the entire render object, including legend font,
+ * visibility, pixel ratio and future fields, as well as the full template/layout/style.
+ * The processing threshold records the geometry loaded originally, independently of a
+ * later display-threshold edit. Input paths remain hints; --spec does not open them. */
 export function buildSpec(config, overlays = []) {
-    const cv = config.layout && config.layout.canvas;
+    const cv = config.layout?.canvas;
     const spec = {
-        // M3: the ONE figure document. layout carries view{s,cx,cy} + per-panel zoom/rotate/slice
-        // (declared in config-schema DEFAULTS), template records the space, style the full per-overlay
-        // style — so Copy-CLI, --spec, the notebook render_spec, presets, and URL-state never drift.
+        ...(config.version != null ? { version: config.version } : {}),
         template: config.template,
         layout: config.layout,
         style: config.style,
         render: {
-            width: Math.round((cv && cv.w) || (config.render && config.render.width) || 1600),
-            height: Math.round((cv && cv.h) || (config.render && config.render.height) || 1000),
-            background: (config.render && config.render.background) || '#ffffff',
+            ...config.render,
+            width: Math.round(config.render?.width || cv?.w || 1600),
+            height: Math.round(config.render?.height || cv?.h || 1000),
+            background: config.render?.background ?? '#ffffff',
+            colorbarWidth: config.render?.colorbarWidth ?? 240,
+            colorbarHeight: config.render?.colorbarHeight ?? 14,
         },
     };
-    // Human-readable data-slot hints. The renderer deliberately keeps the data outside the
-    // recipe; positional CLI/Python inputs fill these slots. Unknown top-level fields are
-    // forward-compatible, so older renderers safely ignore this metadata.
     if (overlays.length) {
-        spec.inputs = overlays.map((o, i) => ({
-            slot: i + 1,
-            name: inputName(o, i),
-            type: o.src?.surface ? 'surface' : 'volume',
-        }));
+        const descriptors = buildInputDescriptors(overlays);
+        spec.inputs = overlays.map((o, i) => {
+            const d = descriptors[i];
+            const input = { slot: i + 1, name: inputName(o, i), type: d.type };
+            if (o.meta?.name) input.label = o.meta.name;
+            if (d.type === 'surface') {
+                input.files = { ...(d.lh ? { lh: d.lh } : {}), ...(d.rh ? { rh: d.rh } : {}) };
+            } else if (d.type === 'parcel') input.atlas = d.atlas;
+            const threshold = o.meta?.threshold ?? o.src?.threshold;
+            if (typeof threshold === 'number' && Number.isFinite(threshold)) input.processingThreshold = threshold;
+            return input;
+        });
     }
-    return spec;
+    // A saved recipe must not keep references to subsequently edited live settings.
+    return copyJSON(spec);
 }
 
-/** Build the CLI command for a single overlay's resolved style. */
-function commandFor(config, i, meta, colormaps, preset) {
-    const s = config.style;
-    const os = overlayStyle(config, i);
-    const cmap = resolveColormap(os, !!meta.diverging, colormaps).name;
-    const pv = PRESET_VIEWS[preset] || PRESET_VIEWS.ninePanel;
+/** Clipboard text: one command for the complete figure, matching Python example, and recipe.
+ * --input-json is repeated for mixed/native inputs so route grouping cannot reorder styles. */
+export function buildRenderText({ config, overlays = [] }) {
+    if (!overlays.length) return '# Load a volume, surface map or parcel table first — there is no overlay to reproduce.';
 
-    const parts = [`comic render ${q(meta.name)} -o glassbrain.png`];
-    parts.push(`--grid ${pv.grid} --views ${pv.views}`);
-    // Data parameters are always explicit so the exported recipe survives future default changes.
-    parts.push(`--threshold ${fmt(os.threshold ?? meta.threshold ?? 2.3)} -k ${fmt(os.clusterMin ?? 0)} --cmap ${cmap}`);
-    if (os.colormapMode && os.colormapMode !== D.colormapMode) parts.push(`--colormap-mode ${os.colormapMode}`);
-    // always override the CLI's print-look defaults so output matches the screen
-    parts.push(`--margin ${fmt(s.margin ?? 0.95)} --line-w ${fmt(s.outline.width)}`);
-    // crop the PNG to the tight bounding box of the visible brains (matches Save PNG)
-    parts.push('--crop content');
-
-    const extra = [];
-    if (s.cortexSurface !== D.cortexSurface) extra.push(`--surface ${s.cortexSurface}`);
-    if (os.representation !== D.representation) extra.push('--voxels blocky');
-    if (os.gamma !== D.gamma) extra.push(`--gamma ${fmt(os.gamma)}`);
-    if (os.veil.strength !== D.veilStrength) extra.push(`--veil ${fmt(os.veil.strength)}`);
-    if (os.veil.k !== D.veilK) extra.push(`--veil-k ${fmt(os.veil.k)}`);
-    if (os.emissive !== D.emissive) extra.push(`--emissive ${fmt(os.emissive)}`);
-    if (os.specular !== D.specular) extra.push(`--specular ${fmt(os.specular)}`);
-    if (os.shininess !== D.shininess) extra.push(`--shininess ${fmt(os.shininess)}`);
-    if (s.lighting.directional !== D.directional) extra.push(`--directional ${fmt(s.lighting.directional)}`);
-    if (s.lighting.ambient !== D.ambient) extra.push(`--ambient ${fmt(s.lighting.ambient)}`);
-    if (s.glass.maxOpacity !== D.glassMaxOpacity) extra.push(`--cortex-alpha ${fmt(s.glass.maxOpacity)}`);
-    if (s.outline.threshold !== D.outlineThreshold) extra.push(`--edge-thr ${fmt(s.outline.threshold)}`);
-    if (os.edges.width !== D.edgeWidth) extra.push(`--voxel-edge-w ${fmt(os.edges.width)}`);
-    if (os.positiveOnly) extra.push('--positive-only');
-    if (os.edges.enabled === false) extra.push('--no-edges');
-    if (s.outline.enabled === false) extra.push('--no-outline');
-    if (s.outline.overVoxels === false) extra.push('--no-lines-over-voxels');
-    else if ((s.outline.overVoxelOpacity ?? 1) !== D.overVoxelOpacity) extra.push(`--lines-over-voxels --over-voxel-opacity ${fmt(s.outline.overVoxelOpacity ?? 1)}`);
-    // Line colours + the split outer contour. Only emitted when moved off the default, so a
-    // stock figure's command is unchanged.
-    if (s.outline.color !== D.lineColor) extra.push(`--line-color ${s.outline.color}`);
-    if (s.outline.anatomyColor) extra.push(`--anat-line-color ${s.outline.anatomyColor}`);
-    if (os.edges.color !== D.edgeColor) extra.push(`--voxel-edge-color ${os.edges.color}`);
-    if (s.outline.silhouette?.color) extra.push(`--silhouette-color ${s.outline.silhouette.color}`);
-    if (s.outline.silhouette?.width != null) extra.push(`--silhouette-w ${fmt(s.outline.silhouette.width)}`);
-    if (extra.length) parts.push(extra.join(' '));
-
-    return parts.join(' \\\n  ');
-}
-
-/**
- * Build the full clipboard/file text: header notes + one command per overlay.
- * @returns {string}
- */
-export function buildRenderText({ config, overlays, preset, colormaps, panelZoomUsed }) {
-    if (!overlays.length) return '# Load a NIfTI first — there is no overlay to reproduce.';
-
-    // Free Canvas / per-panel edits and multi-overlay styles cannot be expressed compactly by
-    // --grid/--views flags: emit one display recipe + one composite command instead.
-    if (usesFigureSpec(config, overlays, panelZoomUsed)) {
-        const spec = buildSpec(config, overlays);
-        const names = overlays.map(inputName);
-        const notes = [
-            '# COMIC browser figure -> reproducible PNG',
-            '# figure.json stores the panels, positions, rotations, cuts, surfaces, colours, thresholds, and size.',
-            '# The image data stays separate: replace the filenames below with paths to your NIfTIs if needed.',
-            '# Inputs bind to style slots from left to right (first file = slot 1, second file = slot 2, etc.).',
-        ];
-        const cmd = `comic render ${names.map(q).join(' ')} --spec figure.json -o glassbrain.png --crop content`;
-        const py = `# gb.render_spec("figure.json", ${JSON.stringify(names)}).save("glassbrain.png")`;
-        return notes.join('\n') + '\n\n# Terminal (ready to run):\n' + cmd
-            + '\n\n# Python equivalent:\n# import comic as gb\n' + py
-            + '\n\n# ---- figure.json (also downloaded separately) ----\n' + JSON.stringify(spec, null, 2) + '\n';
-    }
-
+    const spec = buildSpec(config, overlays);
+    const inputs = buildInputDescriptors(overlays);
+    const volumeOnly = inputs.every((d) => d.type === 'volume');
+    const args = volumeOnly
+        ? inputs.map((d) => q(positionalPath(d.path))).join(' ')
+        : inputs.map((d) => `--input-json ${q(JSON.stringify(d))}`).join(' ');
+    const pythonInputs = volumeOnly ? inputs.map((d) => d.path) : inputs;
     const notes = [
-        '# comic render — reproduces the on-screen view from the CLI tool',
-        '# (needs the `comic` Python package + Playwright/Chromium installed).',
-        '# Replace the filename with the path to your NIfTI on disk.',
+        '# COMIC browser figure -> reproducible PNG',
+        '# figure.json stores the complete layout, style, template, render size and legend settings.',
+        '# Keep figure.json beside this command. Replace source filenames with local paths if needed.',
+        '# Inputs bind to style slots in the displayed order; native surfaces and parcel tables keep their own routes.',
+        '# Original processing thresholds are saved separately from the current display thresholds.',
     ];
-    notes.push('# note: resolution/aspect via --width/--height (default 1600x1000); the browser');
-    notes.push('#       "Save PNG" also adds a slight print look (thinner lines, more margin).');
-
-    const cmds = overlays.map((o, i) => {
-        const head = overlays.length > 1 ? `# overlay ${i + 1}: ${o.meta.name}\n` : '';
-        return head + commandFor(config, i, o.meta, colormaps, preset);
-    });
-    return notes.join('\n') + '\n\n' + cmds.join('\n\n') + '\n';
+    const cmd = `comic render ${args} --spec figure.json -o glassbrain.png --crop content`;
+    const py = `# gb.render_spec("figure.json", ${JSON.stringify(pythonInputs)}, crop="content").save("glassbrain.png")`;
+    return notes.join('\n') + '\n\n# Terminal (ready to run):\n' + cmd
+        + '\n\n# Python equivalent:\n# import comic as gb\n' + py
+        + '\n\n# ---- figure.json (also downloaded separately) ----\n' + JSON.stringify(spec, null, 2) + '\n';
 }
