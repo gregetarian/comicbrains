@@ -250,11 +250,12 @@ def test_cli_cosmetic_defaults_match_fresh_browser_style_and_allow_overrides():
         import fs from 'node:fs';
         import {resolveConfig} from './comic/web/core/presets.js';
         const rc = JSON.parse(fs.readFileSync('./comic/web/data/render-config.json'));
-        console.log(JSON.stringify(resolveConfig(rc.preset, {style: rc.style}).style));
+        console.log(JSON.stringify(resolveConfig(rc.preset, {style: rc.style})));
     """
     completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=root,
                                capture_output=True, text=True, check=True)
-    browser_style = json.loads(completed.stdout)
+    browser_config = json.loads(completed.stdout)
+    browser_style = browser_config["style"]
     options = dict(cmap="YlGnBu", width=700, height=400, scale=1, background="#ffffff",
                    colorbar=True, colorbar_font=None, colorbar_fontsize=None, background_alpha=1)
     layout = build_layout("1x1", ["cortex_subcort_lm"])
@@ -267,7 +268,15 @@ def test_cli_cosmetic_defaults_match_fresh_browser_style_and_allow_overrides():
     """
     completed = subprocess.run([node, "--input-type=module", "-e", normalize, json.dumps(default)],
                                cwd=root, capture_output=True, text=True, check=True)
-    assert json.loads(completed.stdout) == browser_style
+    cli_style = json.loads(completed.stdout)
+    # Browser Free Canvas panels explicitly override the global margin. A CLI
+    # grid needs their effective margin as its fallback, not the tighter global
+    # value; putting a margin on each CLI panel would defeat the --margin flag.
+    effective_margins = {p.get("framing", {}).get("margin", browser_style["margin"])
+                         for p in browser_config["layout"]["panels"]}
+    assert effective_margins == {cli_style["margin"]}
+    assert {k: v for k, v in cli_style.items() if k != "margin"} == {
+        k: v for k, v in browser_style.items() if k != "margin"}
     custom = {"cortexSurface": "inflated", "outline": {"width": 1.25},
               "glass": {"maxOpacity": 0.2}, "margin": 1.1}
     styled, _ = _render_config(layout, custom, **options)

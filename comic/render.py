@@ -268,9 +268,11 @@ def _render_config(layout, style, *, cmap, width, height, scale, background, col
     # transparent; the screenshot then captures real alpha. Default 1 preserves opaque output.
     transparent = background_alpha < 1
     layout = {**layout, "canvas": {**layout.get("canvas", {}), "bgAlpha": background_alpha}}
-    # Match the fresh browser's FREE_DEFAULT cosmetic style. Explicit recipe/flag
-    # settings win. A cross-source test guards this small mirrored preset fragment.
-    cli_style = {"cortexSurface": "pial", "margin": 0.95, "glass": {"maxOpacity": 0.09},
+    # Match FREE_DEFAULT's cosmetic style and effective panel framing. Its panels
+    # use margin 1.04 over the global 0.95; use that as the CLI fallback so whole
+    # brains stay inside the frame, while an explicit --margin still wins.
+    # A cross-source test guards this small mirrored preset fragment.
+    cli_style = {"cortexSurface": "pial", "margin": 1.04, "glass": {"maxOpacity": 0.09},
                  "outline": {"width": 3.5}}
     merged_style = _deep_merge(cli_style, style or {})
     merged_style["colormap"] = cmap
