@@ -580,7 +580,7 @@ test('Free Canvas Copy CLI includes every overlay in slot order', () => {
     ];
     const text = buildRenderText({ config, overlays, preset: 'freeCanvas', colormaps: new Map() });
     assert.match(text, /comic render 'first map\.nii\.gz' second\.nii\.gz --spec figure\.json/);
-    assert.match(text, /gb\.render_spec\("figure\.json", \["first map\.nii\.gz","second\.nii\.gz"\]\)/);
+    assert.match(text, /gb\.render_spec\("figure\.json", \["first map\.nii\.gz","second\.nii\.gz"\], crop="content"\)/);
     const json = JSON.parse(text.slice(text.indexOf('{'), text.lastIndexOf('}') + 1));
     assert.deepEqual(json.inputs.map((x) => [x.slot, x.name]), [
         [1, 'first map.nii.gz'], [2, 'second.nii.gz'],

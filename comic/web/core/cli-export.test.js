@@ -36,8 +36,9 @@ test('simple-grid export preserves full style, template, legends and view withou
     assert.deepEqual(spec.style, config.style);
     assert.deepEqual(spec.template, config.template);
     assert.deepEqual(spec.layout, config.layout);
-    assert.deepEqual(spec.render, config.render);
+    assert.deepEqual(spec.render, { ...config.render, colorbarWidth: 240, colorbarHeight: 14 });
     assert.match(commandFrom(text), /--spec figure\.json/);
+    assert.match(text, /crop="content"\)\.save/);
     assert.doesNotMatch(commandFrom(text), /--voxels|--line-color|--grid|--gamma/);
     assert.equal(spec.inputs[0].processingThreshold, 2.3);
     assert.equal(spec.style.threshold, 4);

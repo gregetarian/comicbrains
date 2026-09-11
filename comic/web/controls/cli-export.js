@@ -64,6 +64,8 @@ export function buildSpec(config, overlays = []) {
             width: Math.round(cv?.w || config.render?.width || 1600),
             height: Math.round(cv?.h || config.render?.height || 1000),
             background: config.render?.background ?? '#ffffff',
+            colorbarWidth: config.render?.colorbarWidth ?? 240,
+            colorbarHeight: config.render?.colorbarHeight ?? 14,
         },
     };
     if (overlays.length) {
@@ -104,7 +106,7 @@ export function buildRenderText({ config, overlays = [] }) {
         '# Original processing thresholds are saved separately from the current display thresholds.',
     ];
     const cmd = `comic render ${args} --spec figure.json -o glassbrain.png --crop content`;
-    const py = `# gb.render_spec("figure.json", ${JSON.stringify(pythonInputs)}).save("glassbrain.png")`;
+    const py = `# gb.render_spec("figure.json", ${JSON.stringify(pythonInputs)}, crop="content").save("glassbrain.png")`;
     return notes.join('\n') + '\n\n# Terminal (ready to run):\n' + cmd
         + '\n\n# Python equivalent:\n# import comic as gb\n' + py
         + '\n\n# ---- figure.json (also downloaded separately) ----\n' + JSON.stringify(spec, null, 2) + '\n';
