@@ -7,13 +7,14 @@ before handing it to the engine, so the three front-ends agree on what a valid f
 """
 
 import re
+import math
 
 TEMPLATE_KINDS = {"mni", "custom", "none"}
 REPRESENTATIONS = {"blocky", "smooth", "surface", None}
 VOLUME_REPRESENTATIONS = {"blocky", "smooth", None}
 ROLES = {"cortex", "anatomy", "voxel"}
 HEMI = {"lh", "rh", "both"}
-INPUT_TYPES = {"volume", "surface"}
+INPUT_TYPES = {"volume", "surface", "parcel"}
 
 
 _HEX_RE = re.compile(r"^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$")
@@ -61,6 +62,9 @@ def validate(spec):
                     errs.append(f"inputs[{i}].name must be a non-empty string")
                 if item.get("type", "volume") not in INPUT_TYPES:
                     errs.append(f"inputs[{i}].type must be one of {sorted(INPUT_TYPES)}")
+                t = item.get('processingThreshold')
+                if t is not None and (isinstance(t, bool) or not isinstance(t, (int, float)) or not math.isfinite(t) or t < 0):
+                    errs.append(f"inputs[{i}].processingThreshold must be finite and nonnegative")
 
     style = cfg.get("style") or {}
     if not _clim_ok(style.get("clim")):

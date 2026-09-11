@@ -7,6 +7,7 @@ customisable layout: any grid of anatomical views, plus all style parameters.
 """
 
 import json
+import copy
 import shutil
 import tempfile
 import threading
@@ -36,7 +37,7 @@ def _cortex_subcort_contra(cortex_hemi, sub_hemi):
     anatomy_categories = [f"subcort_{side}", f"cereb_{side}", "brainstem"]
     return {"roles": ["cortex", "anatomy", "voxel"], "hemisphere": cortex_hemi,
             "anatomyHemisphere": sub_hemi,
-            "representation": "surface",
+            "categories": None,
             "anatomyCategories": anatomy_categories,
             "voxelCategories": [f"{cortex_hemi}_cortex", *anatomy_categories],
             "anatomyStyle": "opaque"}
@@ -95,7 +96,7 @@ def build_layout(grid, views):
             continue
         plane, content, title = resolved
         panel = {"id": f"p{i}", "title": title, "cell": {"row": r, "col": c},
-                 "camera": {"plane": plane}, "content": content}
+                 "camera": {"plane": plane}, "content": copy.deepcopy(content)}
         if content["roles"][0] == "anatomy":
             panel["anatomyOpacity"] = 0.55          # subcort close-ups keep their own zoom
         else:
@@ -122,7 +123,7 @@ def load_spec(path):
 
 
 # --- background static server --------------------------------------------
-def _serve_dir(directory, port=8500):
+def _serve_dir(directory, port=0):
     directory = str(Path(directory).resolve())
 
     class Handler(http.server.SimpleHTTPRequestHandler):
@@ -136,16 +137,11 @@ def _serve_dir(directory, port=8500):
         def log_message(self, *a):
             pass
 
-    for p in range(port, port + 200):
-        try:
-            httpd = http.server.ThreadingHTTPServer(("", p), Handler)
-            break
-        except OSError:
-            continue
-    else:
-        raise RuntimeError("no free port for render server")
+    # Let the OS allocate a private port for each render session. Binding to
+    # loopback also keeps temporary input data off the local network.
+    httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    return httpd, p
+    return httpd, httpd.server_address[1]
 
 
 def _deep_merge(base, over):
@@ -195,7 +191,7 @@ def _surface_map_name(sm):
 
 
 def prepare_render_dir(nifti=None, threshold=2.3, include_subcortical=True, names=None, template_dir=None,
-                       classify=True, surface=False, surface_maps=None):
+                       classify=True, surface=False, surface_maps=None, input_maps=None):
     """Stage a self-contained render dir: a copy of the single viewer with the overlay(s)
     processed in-process (same pipeline.py the browser runs) and written as ARRAYS
     (overlay_<i>.bin + meta in scene.json) — no GLB, no per-render template re-bake.
@@ -208,73 +204,85 @@ def prepare_render_dir(nifti=None, threshold=2.3, include_subcortical=True, name
     `names` (optional) is a per-overlay display name. Returns the dir path."""
     from . import pipeline as P
     from .arrays import write_overlay_arrays
+    from .inputs import input_descriptors
 
-    niftis = [] if nifti is None else ([nifti] if isinstance(nifti, (str, Path)) else list(nifti))
-    surface_maps = list(surface_maps or [])
-    n_total = len(niftis) + len(surface_maps)
+    inputs = input_descriptors(nifti, surface_maps, input_maps)
+    n_total = len(inputs)
     thresholds = ([float(threshold)] * n_total if isinstance(threshold, (int, float))
                   else [float(t) for t in threshold])
-    names = names or [None] * n_total
+    names = list(names or [])
+    names += [None] * (n_total - len(names))
+    if len(thresholds) != n_total:
+        raise ValueError(f"expected {n_total} processing thresholds, received {len(thresholds)}")
 
     out_dir = Path(tempfile.mkdtemp(prefix="gb_render_"))
-    shutil.copytree(WEB_DIR, out_dir, dirs_exist_ok=True)
-    data = out_dir / "data"
-    # M4 hook (custom/non-MNI template, exercised in M9): overlay a template bundle's data/
-    # (cortex/subcortical GLBs + aseg + scene.json) on top of the bundled fsaverage assets.
-    if template_dir is not None:
-        shutil.copytree(Path(template_dir) / "data", data, dirs_exist_ok=True)
-    P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
-    # Native surface overlays (and volume->surface projection) both need the cortex sidecar.
-    if (surface or surface_maps) and (data / "cortex_surface.bin.gz").exists():
-        P.init_cortex((data / "cortex_surface.bin.gz").read_bytes(), (data / "cortex_surface.json").read_text())
+    try:
+        shutil.copytree(WEB_DIR, out_dir, dirs_exist_ok=True)
+        data = out_dir / "data"
+        # M4 hook (custom/non-MNI template, exercised in M9): overlay a template bundle's data/
+        # (cortex/subcortical GLBs + aseg + scene.json) on top of the bundled fsaverage assets.
+        if template_dir is not None:
+            shutil.copytree(Path(template_dir) / "data", data, dirs_exist_ok=True)
+        P.init_aseg((data / "aseg_uint8.bin.gz").read_bytes(), (data / "aseg.json").read_text())
+        # Native surface overlays (and volume->surface projection) both need the cortex sidecar.
+        if (surface or any(d['type'] != 'volume' for d in inputs)) and (data / "cortex_surface.bin.gz").exists():
+            P.init_cortex((data / "cortex_surface.bin.gz").read_bytes(), (data / "cortex_surface.json").read_text())
 
-    metas = []
-    for i, src in enumerate(niftis):
-        name = names[i] or Path(src).name.replace(".nii.gz", "").replace(".nii", "")
-        meta = json.loads(P.process_nifti(str(src), name, thresholds[i], classify=classify, surface=surface))
-        # grab THIS overlay's buffers before the next process_* clears _BUFFERS
-        metas.append(write_overlay_arrays(data, meta, P.get_all_buffers(), index=i))
-    for j, sm in enumerate(surface_maps):
-        i = len(niftis) + j
-        name = names[i] or sm.get("name") or _surface_map_name(sm)
-        meta = json.loads(P.process_surface(sm.get("lh"), sm.get("rh"), name, thresholds[i]))
-        metas.append(write_overlay_arrays(data, meta, P.get_all_buffers(), index=i))
+        metas = []
+        for i, item in enumerate(inputs):
+            if item['type'] == 'volume':
+                src = item['path']
+                name = names[i] or item.get('name') or Path(src).name.replace('.nii.gz', '').replace('.nii', '')
+                meta = json.loads(P.process_nifti(str(src), name, thresholds[i], classify=classify, surface=surface))
+            else:
+                sm = item
+                if item['type'] == 'parcel':
+                    from . import parcels
+                    sm = parcels.values_to_vertex_maps(parcels.load_value_table(item['path']), item['atlas'],
+                                                       data / 'parcels')
+                name = names[i] or item.get('name') or (Path(item['path']).stem if item['type'] == 'parcel' else _surface_map_name(sm))
+                meta = json.loads(P.process_surface(sm.get('lh'), sm.get('rh'), name, thresholds[i]))
+            metas.append(write_overlay_arrays(data, meta, P.get_all_buffers(), index=i))
 
-    scene = json.loads((data / "scene.json").read_text())
-    if not include_subcortical:
-        scene.pop("subcortical", None)
-    if not classify:
-        # No-template / volume-only (M7): drop the anatomical shell; the volume stands alone.
-        scene.pop("cortex", None)
-        scene.pop("subcortical", None)
-        scene["templateMode"] = "none"
-    scene["overlays"] = metas
-    (data / "scene.json").write_text(json.dumps(scene))
+        scene = json.loads((data / "scene.json").read_text())
+        if not include_subcortical:
+            scene.pop("subcortical", None)
+        if not classify:
+            # No-template / volume-only (M7): drop the anatomical shell; the volume stands alone.
+            scene.pop("cortex", None)
+            scene.pop("subcortical", None)
+            scene["templateMode"] = "none"
+        scene["overlays"] = metas
+        (data / "scene.json").write_text(json.dumps(scene))
+    except BaseException:
+        shutil.rmtree(out_dir, ignore_errors=True)
+        raise
     return out_dir
 
 
 def _render_config(layout, style, *, cmap, width, height, scale, background, colorbar,
-                   colorbar_font, colorbar_fontsize, background_alpha):
+                   colorbar_font, colorbar_fontsize, background_alpha, render_options=None):
     """Build the render-config.json the headless viewer consumes (the exact dict the old
     render_to_png built inline). Returns (config, transparent)."""
     # Transparent background (Free Canvas): record bgAlpha in the layout so the WebGL clear is
     # transparent; the screenshot then captures real alpha. Default 1 preserves opaque output.
     transparent = background_alpha < 1
-    if transparent:
-        layout = {**layout, "canvas": {**layout.get("canvas", {}), "bgAlpha": background_alpha}}
-    # CLI figures (print) want thicker surface lines, a little more breathing room, and no faint
-    # subcortical glass shell. Defaults — any explicit flag in `style` wins via the deep-merge.
-    cli_style = {"margin": 1.05, "outline": {"width": 7.0}, "anatomy": {"maxOpacity": 0.0}}
+    layout = {**layout, "canvas": {**layout.get("canvas", {}), "bgAlpha": background_alpha}}
+    # Match the fresh browser's FREE_DEFAULT cosmetic style. Explicit recipe/flag
+    # settings win. A cross-source test guards this small mirrored preset fragment.
+    cli_style = {"cortexSurface": "pial", "margin": 0.95, "glass": {"maxOpacity": 0.09},
+                 "outline": {"width": 3.5}}
     merged_style = _deep_merge(cli_style, style or {})
     merged_style["colormap"] = cmap
     cb_w = round(width * 0.22)   # colorbar scaled to the figure
     config = {
         "layout": layout,
         "style": merged_style,
-        "render": {"width": width, "height": height, "pixelRatio": scale,
+        "render": {**(render_options or {}), "width": width, "height": height, "pixelRatio": scale,
                    "background": background, "colorbar": colorbar,
-                   "colorbarWidth": cb_w, "colorbarHeight": max(16, round(cb_w / 15)),
-                   "colorbarFontSize": colorbar_fontsize or max(13, round(width * 0.011)),
+                   "colorbarWidth": (render_options or {}).get('colorbarWidth', cb_w),
+                   "colorbarHeight": (render_options or {}).get('colorbarHeight', max(16, round(cb_w / 15))),
+                   "colorbarFontSize": colorbar_fontsize or (render_options or {}).get('colorbarFontSize', max(13, round(width * 0.011))),
                    **({"colorbarFont": colorbar_font} if colorbar_font else {})},
     }
     return config, transparent
@@ -303,7 +311,7 @@ class RenderSession:
                width=1600, height=1000, scale=2, include_subcortical=True,
                background="#ffffff", background_alpha=1.0, colorbar=True, colorbar_font=None,
                colorbar_fontsize=None, crop="none", names=None, timeout_ms=90000, return_bytes=False,
-               classify=True, surface_maps=None):
+               classify=True, surface_maps=None, input_maps=None, render_options=None, colorbar_svg=False):
         """Render one figure. Writes <out_png> (+ <out_png>_colorbars) when out_png is given;
         returns its Path. With return_bytes=True returns (brain_png_bytes, colorbar_png_bytes|None)
         — the inline-display path. `nifti` is one path or a list (one overlay each); `surface_maps`
@@ -311,20 +319,21 @@ class RenderSession:
         is the no-template / volume-only path (no anatomical shell)."""
         if names is None and style and isinstance(style.get("overlays"), list):
             names = [(o or {}).get("name") for o in style["overlays"]] or None
-        n_vol = 0 if nifti is None else (1 if isinstance(nifti, (str, Path)) else len(nifti))
-        n_overlays = n_vol + len(surface_maps or [])
+        from .inputs import input_descriptors
+        n_overlays = len(input_descriptors(nifti, surface_maps, input_maps))
         out_dir = prepare_render_dir(nifti, threshold, include_subcortical, names=names,
                                      template_dir=self.template_dir, classify=classify,
-                                     surface=_wants_surface(style, layout), surface_maps=surface_maps)
+                                     surface=_wants_surface(style, layout), surface_maps=surface_maps, input_maps=input_maps)
         config, transparent = _render_config(
             layout, style, cmap=cmap, width=width, height=height, scale=scale,
             background=background, colorbar=colorbar, colorbar_font=colorbar_font,
-            colorbar_fontsize=colorbar_fontsize, background_alpha=background_alpha)
+            colorbar_fontsize=colorbar_fontsize, background_alpha=background_alpha, render_options=render_options)
         (out_dir / "render-config.json").write_text(json.dumps(config, indent=2))
 
         httpd, port = _serve_dir(out_dir)
         try:
             brain = cbar = last = None
+            svg_bars = []
             for attempt in range(3):   # retry transient headless stalls (__GB_DONE__ never fires)
                 page = self.browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
                 try:
@@ -336,6 +345,12 @@ class RenderSession:
                     err = page.evaluate("window.__GB_ERR__ || null")
                     if err:
                         raise RuntimeError(f"viewer error: {err}")
+                    if colorbar_svg:
+                        svg_bars = page.evaluate("""async () => {
+                            const {colorbarSVGs} = await import('./controls/colorbar.js?v=depth-auto-v3');
+                            const e = window.__engine();
+                            return colorbarSVGs(e.config, e.overlays, e.colormaps);
+                        }""")
                     # Brain: hide the colorbar so the brains fill the full frame, then screenshot to bytes.
                     page.evaluate("() => { const c = document.querySelector('.colorbar'); if (c) c.style.display = 'none'; }")
                     if transparent:
@@ -367,6 +382,7 @@ class RenderSession:
                 raise last
         finally:
             httpd.shutdown()
+            httpd.server_close()
             if not self.keep_dirs:
                 shutil.rmtree(out_dir, ignore_errors=True)
 
@@ -376,6 +392,11 @@ class RenderSession:
             if cbar is not None:
                 side = Path(out_png).with_name(Path(out_png).stem + "_colorbars" + Path(out_png).suffix)
                 Path(side).write_bytes(cbar)
+                outputs.append(side)
+            for i, svg in enumerate(svg_bars):
+                suffix = f'_overlay{i}' if len(svg_bars) > 1 else ''
+                side = Path(out_png).with_name(Path(out_png).stem + suffix + '_colorbars.svg')
+                side.write_text(svg)
                 outputs.append(side)
             print("Rendered " + ", ".join(str(o) for o in outputs) +
                   f"  ({width}x{height} @{scale}x, {n_overlays} overlay{'s' if n_overlays != 1 else ''})")
@@ -423,6 +444,7 @@ class RenderSession:
                 page.close()
         finally:
             httpd.shutdown()
+            httpd.server_close()
             if not self.keep_dirs:
                 shutil.rmtree(out_dir, ignore_errors=True)
         return out
@@ -492,34 +514,61 @@ def render_sweep(nifti, out, *, layout, param, values, cols=None, template_dir=N
     return out
 
 
-def colorbar_svg(out, *, colormap, vmin, vmax, units=None, n=64, width=460, bar_h=22, colormaps_json=None):
-    """Write a crisp VECTOR colorbar legend as SVG (M10): a gradient sampled from the colormap LUT +
-    three tick labels + optional units. The brain itself stays raster (a shaded volume render);
-    only the legend is vectorised, where that is both correct and what journals want."""
-    cj = colormaps_json or json.loads((WEB_DIR / "data" / "colormaps.json").read_text())
-    nn = cj["n"]
-    lut = (cj["maps"].get(colormap) or next(iter(cj["maps"].values())))["lut"]
+def _colorbar_documents(config, metas, colormaps_json=None):
+    """Ask the shared browser module for SVG; no parallel Python colour mathematics."""
+    cj = colormaps_json or json.loads((WEB_DIR / 'data' / 'colormaps.json').read_text())
+    httpd, port = _serve_dir(WEB_DIR)
+    try:
+        with RenderSession() as session:
+            page = session.browser.new_page()
+            try:
+                page.goto(f'http://localhost:{port}/data/scene.json', wait_until='domcontentloaded')
+                return page.evaluate("""async ({config, metas, cj}) => {
+                    const {normalizeConfig} = await import('/core/config-schema.js');
+                    const {loadColormaps} = await import('/core/colormap.js');
+                    const {colorbarSVGs} = await import('/controls/colorbar.js');
+                    return colorbarSVGs(normalizeConfig(config), metas, loadColormaps(cj));
+                }""", {'config': config, 'metas': metas, 'cj': cj})
+            finally:
+                page.close()
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
-    def hexat(t):
-        x = max(0.0, min(1.0, t)) * (nn - 1)
-        i = min(nn - 2, int(x))
-        f = x - i
-        c = [lut[i][k] + (lut[i + 1][k] - lut[i][k]) * f for k in range(3)]
-        return "#%02x%02x%02x" % tuple(max(0, min(255, round(v * 255))) for v in c)
 
-    pad = 4
-    stops = "".join(f'<stop offset="{j/(n-1)*100:.1f}%" stop-color="{hexat(j/(n-1))}"/>' for j in range(n))
-    ticks = [(vmin, "start"), ((vmin + vmax) / 2, "middle"), (vmax, "end")]
-    tx = "".join(f'<text x="{pad + p*(width-1):.1f}" y="{bar_h+13}" font-size="11" font-family="serif" '
-                 f'text-anchor="{a}" fill="#555">{v:.1f}</text>' for (v, a), p in zip(ticks, (0, 0.5, 1.0)))
-    uh = 14 if units and units != "stat" else 0
-    ut = (f'<text x="{pad + width/2:.0f}" y="{bar_h+27}" font-size="11" font-family="serif" '
-          f'text-anchor="middle" fill="#555">{units}</text>') if uh else ""
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{width + 2*pad}" height="{bar_h + 16 + uh}">'
-           f'<defs><linearGradient id="cb">{stops}</linearGradient></defs>'
-           f'<rect x="{pad}" y="0" width="{width}" height="{bar_h}" fill="url(#cb)" stroke="#d0d0d0"/>{tx}{ut}</svg>')
-    Path(out).write_text(svg)
+def colorbar_svg(out, *, colormap, vmin, vmax, units=None, n=64, width=460, bar_h=22,
+                 colormaps_json=None, gamma=1, threshold=0, positive_only=False):
+    """Write a vector legend using the same JavaScript model as the browser/CLI PNG bars.
+
+    Requires the render extra and Chromium. ``n`` is retained for call compatibility;
+    the shared model samples at the requested bar width for consistent PNG/SVG colour.
+    """
+    config = {'layout': build_layout('1x1', ['dorsal']),
+              'style': {'colormap': colormap, 'clim': [vmin, vmax], 'gamma': gamma,
+                        'threshold': threshold, 'positiveOnly': positive_only,
+                        'units': {'value': units or 'stat'}},
+              'render': {'colorbarWidth': width, 'colorbarHeight': bar_h, 'colorbarFontSize': 11}}
+    meta = {'maxAbsValue': max(abs(vmin), abs(vmax)), 'diverging': vmin < 0 < vmax,
+            'negativeOnly': vmax <= 0, 'threshold': threshold}
+    Path(out).write_text(_colorbar_documents(config, [meta], colormaps_json)[0])
     return out
+
+
+def export_colorbar_svgs(out, *, input_maps, style, thresholds, template_dir=None, classify=True):
+    """Legends for animation/sweep routes, using their inputs and the shared colour model."""
+    stage = prepare_render_dir(input_maps=input_maps, threshold=thresholds,
+                               template_dir=template_dir, classify=classify)
+    try:
+        metas = json.loads((stage / 'data' / 'scene.json').read_text())['overlays']
+        config = {'layout': build_layout('1x1', ['dorsal']), 'style': style,
+                  'render': {'colorbarWidth': 460, 'colorbarHeight': 22, 'colorbarFontSize': 11}}
+        docs = _colorbar_documents(config, metas)
+        for i, svg in enumerate(docs):
+            suffix = f'_overlay{i}' if len(docs) > 1 else ''
+            path = Path(out).with_name(Path(out).stem + suffix + '_colorbars.svg')
+            path.write_text(svg)
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
 
 
 def region_report(nifti, threshold=2.3, template_dir=None):

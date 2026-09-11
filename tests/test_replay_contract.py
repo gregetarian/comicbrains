@@ -14,7 +14,7 @@ import pytest
 import comic as gb
 from comic import figure as figure_module
 from comic.inputs import input_descriptors, input_names, processing_thresholds, validate_input_types
-from comic.render import VIEWS, _wants_surface, build_layout, to_volume_layout
+from comic.render import VIEWS, _render_config, _wants_surface, build_layout, to_volume_layout
 
 
 class StubSession:
@@ -237,3 +237,39 @@ def test_named_paired_views_match_browser_and_do_not_force_surface_projection():
         assert not _wants_surface({"voxel": {"representation": "smooth"}}, layout)
         assert not _wants_surface({"voxel": {"representation": "blocky"}}, layout)
         assert _wants_surface({"voxel": {"representation": "surface"}}, layout)
+
+
+def test_cli_cosmetic_defaults_match_fresh_browser_style_and_allow_overrides():
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("Node.js is required to compare the browser's startup preset")
+    root = Path(__file__).resolve().parents[1]
+    # Resolve the actual shipped startup config, not a second copy of expected
+    # constants. This catches future changes to either the selected preset or style.
+    script = """
+        import fs from 'node:fs';
+        import {resolveConfig} from './comic/web/core/presets.js';
+        const rc = JSON.parse(fs.readFileSync('./comic/web/data/render-config.json'));
+        console.log(JSON.stringify(resolveConfig(rc.preset, {style: rc.style}).style));
+    """
+    completed = subprocess.run([node, "--input-type=module", "-e", script], cwd=root,
+                               capture_output=True, text=True, check=True)
+    browser_style = json.loads(completed.stdout)
+    options = dict(cmap="YlGnBu", width=700, height=400, scale=1, background="#ffffff",
+                   colorbar=True, colorbar_font=None, colorbar_fontsize=None, background_alpha=1)
+    layout = build_layout("1x1", ["cortex_subcort_lm"])
+    default, _ = _render_config(layout, {}, **options)
+    # Normalize the staged CLI config through the real JS defaults, as headless
+    # startup does, so inherited fields are compared as well as explicit fields.
+    normalize = """
+        import {normalizeConfig} from './comic/web/core/config-schema.js';
+        console.log(JSON.stringify(normalizeConfig(JSON.parse(process.argv[1])).style));
+    """
+    completed = subprocess.run([node, "--input-type=module", "-e", normalize, json.dumps(default)],
+                               cwd=root, capture_output=True, text=True, check=True)
+    assert json.loads(completed.stdout) == browser_style
+    custom = {"cortexSurface": "inflated", "outline": {"width": 1.25},
+              "glass": {"maxOpacity": 0.2}, "margin": 1.1}
+    styled, _ = _render_config(layout, custom, **options)
+    for key, value in custom.items():
+        assert styled["style"][key] == value
