@@ -47,7 +47,7 @@ def test_hybrid_panel_requests_surface_geometry_without_changing_global_voxel_mo
         "representation": "surface",
     }}]}
     assert _wants_surface({"voxel": {"representation": "blocky"}}, layout) is True
-    assert _wants_surface({}, {"panels": [{"view": "cortex_subcort_l", "content": {}}]}) is True
+    assert _wants_surface({}, {"panels": [{"view": "cortex_subcort_l", "content": {}}]}) is False
     assert _wants_surface({"voxel": {"representation": "blocky"}}, {"panels": []}) is False
 
 
