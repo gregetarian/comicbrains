@@ -98,5 +98,9 @@ def main():
         server.server_close()
 
 
+def test_browser_cli_replay():
+    main()
+
+
 if __name__ == "__main__":
     main()

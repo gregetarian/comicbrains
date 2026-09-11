@@ -85,6 +85,7 @@ jobs:
         run: >
           pytest -q
           tests/integration_test.py
+          tests/test_browser_cli_replay.py
           tests/test_animation.py
           tests/test_cli_per_overlay.py
           tests/test_custom_template.py
