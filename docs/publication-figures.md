@@ -15,6 +15,19 @@ The hosted application processes loaded data on your computer. The first use dow
 
 The recipe records panel layout, representation, cameras, colour settings and legend controls. Preserve it alongside the original inputs and the Comic revision. Source filenames are path hints; replace them with local paths before running the copied command.
 
+## Worked example with four maps
+
+Figure 2 of the accompanying manuscript composes the four Neurosynth maps introduced separately in the Nilearn comparison. Its prepared inputs retain finite positive values at or above 2.3. The original maps are also included in the reproduction package.
+
+1. Load the prepared maps in the order **Faces, Addiction, Default network, Language**. Select smooth volumetric display, positive-only values, threshold `2.3` and component-size cutoff `0`.
+2. Set each overlay's colourmap and limits: Faces, `Purples` and `0–21`; Addiction, `Reds` and `0–9.5`; Default network, `Greens` and `0–12`; Language, `YlGnBu` and `0–16`. Set gamma `0.5` and enable outer blob outlines. These maps keep separate scales within the combined scene.
+3. In **Free Canvas**, arrange four lateral and medial panels around a larger dorsal view. Figure 2's side panels pair the named cortical hemisphere with opaque contralateral subcortex and cerebellum, plus brainstem. Check each view for obscured overlays; the separate maps in Figure 1 provide complementary displays.
+4. Export the brain image and colour bars, then use **Copy CLI** to retain the composition recipe. Supply the same files in the recorded order when replaying it. The exact Figure 2A brain composition is provided as `recipes/composition.json`, with a command in **Reproduce the paper figures** below.
+
+The recipe records the five-panel arrangement, visible anatomy, cameras, loading thresholds, overlay scales, line settings and output dimensions. Figure 2B additionally shows three representations of the language map. The supplied assembly script combines those renders with labels and calibrated legends into the final manuscript plate.
+
+To adapt this example, replace an input at the corresponding position, check its spatial correspondence, and update its label and limits if necessary. Keeping the recipe's fixed limits preserves the scale across comparable replacement maps. The recipe does not establish that the maps measure the same quantity or use compatible coordinates.
+
 ## Install the optional renderer
 
 No installation is needed for browser use. To automate output, install from the source checkout:
@@ -226,7 +239,7 @@ The accompanying publication folder contains three figures, their input files, n
 python scripts/reproduce.py --comic-repo /path/to/comic
 ```
 
-This produces PNG, TIFF and PDF figures in `figures/`. Figure 1 uses identical positive-only inputs, the exact Comic lookup tables, gamma 1 and fixed colour limits. Figure 2 uses the same prepared inputs and limits, with gamma 0.5. **Positive only** is enabled globally and for every Figure 2 overlay. The prepared inputs also exclude negative values. Figure 3 uses gamma 1 for the signed parcel values. `provenance.json` records the input hashes, display settings, excluded-value handling and atlas assignment. `recipes/jobs.json` records the render jobs. `requirements-lock.txt` records the environment used here.
+This produces PNG, TIFF and PDF figures in `figures/`. Figure 1 uses identical positive-only inputs, the exact Comic lookup tables, gamma 1 and fixed colour limits. Figure 2 uses the same prepared inputs and limits, with gamma 0.5. **Positive only** is enabled globally and for every Figure 2 overlay. The prepared inputs also exclude negative values. Figure 3 uses gamma 1 for the signed parcel values, with parcel boundary width 2.2 and cortical surfaces only. Its panels omit the anatomy role and restrict categories to `lh_cortex` and `rh_cortex`, so no subcortex, cerebellum or brainstem is shown. `provenance.json` records the input hashes, display settings, excluded-value handling and atlas assignment. `recipes/jobs.json` records the render jobs. `requirements-lock.txt` records the environment used here.
 
 The following commands render representative brain panels directly from the package directory. The final plates add labels and calibrated legends through `scripts/reproduce.py`.
 
@@ -246,12 +259,16 @@ comic render --parcel-values data/eigenfield_schaefer100_17_named.csv \
   --crop content --no-colorbar -o figures/parcels_pial_brains.png
 ```
 
+`recipes/composition.json` describes the five-view, four-overlay brain composition and binds its styles to the file order shown above. `recipes/parcels_pial.json` describes five cortical-only views, with the pial surface, parcel borders, cortical fold lines and a linear −1 to 1 colour scale. The parcel table and atlas are supplied explicitly in the command. Both recipes retain loading thresholds and render dimensions; neither embeds the scientific inputs, pins the software revision or includes the final plate's assembly code.
+
 Figure 2's paired side views combine cortex from the labelled hemisphere with contralateral subcortex and cerebellum, plus brainstem, and set `content.anatomyStyle` to `"opaque"`. The JSON specifies these contents while retaining the selected smooth overlay. The matching `cortex_subcort_*` named views also preserve the selected representation.
 
-Figure 2 explicitly sets statistical blob outlines to `voxel.edges.enabled: true`, `mode: "outer"`, `width: 1.4` and `opacity: 1` in its saved styles. These outline the statistical blobs separately from the anatomical silhouette. A per-overlay setting is necessary to enable them for surface overlays. To set the same edges from the CLI, add:
+The publication figures use cortex alpha 1 (`glass.maxOpacity: 1`), with a zero minimum opacity. Cortical fold lines, silhouettes and parcel borders have been slightly thickened; the exact per-figure widths are retained in the saved recipes.
+
+Figure 2 explicitly sets statistical blob outlines to `voxel.edges.enabled: true`, `mode: "outer"`, `width: 1.6` and `opacity: 1` in its saved styles. These outline the statistical blobs separately from the anatomical silhouette. A per-overlay setting is necessary to enable them for surface overlays. To set the same edges from the CLI, add:
 
 ```bash
---overlay-json '{"voxel":{"edges":{"enabled":true,"mode":"outer","width":1.4,"opacity":1}}}'
+--overlay-json '{"voxel":{"edges":{"enabled":true,"mode":"outer","width":1.6,"opacity":1}}}'
 ```
 
 Repeat `--overlay-json` for each overlay. This override also works with `--spec`. Alternatively, edit the equivalent fields under each relevant `style.overlays` entry in the recipe.
@@ -288,5 +305,13 @@ Comic displays already-computed results. It does not register maps or perform st
 Cluster membership is determined at the processing threshold; changing the live display threshold does not relabel components. New recipes retain the processing threshold for each input, independently of its display threshold. With this metadata present, `--threshold` changes display only; `--processing-threshold` deliberately rebuilds the prepared geometry. Older recipes without processing metadata fall back to their effective display threshold. Re-export them from the original session if the original loading state is needed.
 
 For the volumetric paper examples, both thresholds are 2.3; the parcel example uses 0. Smooth geometry, camera angle and transparency affect what is visible. Small raster differences can occur across WebGL implementations, even with the same data and recipe.
+
+### Transparency and thresholding
+
+[Taylor and colleagues (2026)](https://doi.org/10.1038/s41592-026-03206-7) recommend retaining subthreshold context through graded transparency. Comic's anatomical alpha and whole-overlay opacity are separate display controls; neither implements this statistical fading.
+
+The package preserves original inputs and checksums, while recipes record processing and display thresholds, colour limits, sign selection and gamma. Figure 3 shows the complete supplied signed parcel field without thresholding. The volumetric examples instead use a hard cutoff: their prepared inputs remove negative values and values below 2.3. Lowering the live display threshold cannot recover discarded geometry; rebuild from the original input with the intended processing threshold. Native surface inputs retain their values, but subthreshold locations are hidden or drawn in a neutral colour.
+
+Comic can display effect estimates and statistics as separate maps, but does not currently use one map's statistics to fade another map's effect colours. Keep the original maps alongside thresholded figures and describe these display choices.
 
 For configuration details, see [Reusing a browser figure](reusing-figure-json.md). For implementation and scientific limits, see [METHODS.md](../METHODS.md).
